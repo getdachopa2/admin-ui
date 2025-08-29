@@ -1,11 +1,11 @@
 // src/components/wizard/StepPayment.tsx
 import React from "react";
 
-/** MSISDN -> '90...' */
+/** MSISDN normalizasyonu — 053x… ise 90 ekler. */
 export function normalizeMsisdn(x: string) {
   let d = (x || "").replace(/\D+/g, "");
   if (d.startsWith("0")) d = "90" + d.slice(1);
-  if (!d.startsWith("90")) d = "90" + d;
+  if (!d.startsWith("90")) d = d;
   return d;
 }
 
@@ -16,13 +16,7 @@ export type PaymentState = {
   msisdn: string;
   threeDOperation: boolean;
   installmentNumber: number;
-
-  /** 3D seçilince doldurulacak, opsiyonel */
-  threeDSessionID?: string;
-
-  /** Zorunlu; UI’da şimdilik sabit tutabiliriz */
   paymentType: "CREDITCARD" | "DEBITCARD" | "WALLET" | "CARD_TOKEN";
-
   options: {
     includeMsisdnInOrderID: boolean;
     checkCBBLForMsisdn: boolean;
@@ -30,7 +24,6 @@ export type PaymentState = {
     checkFraudStatus: boolean;
   };
 };
-
 
 export default function StepPayment({
   value,
@@ -40,17 +33,30 @@ export default function StepPayment({
   onChange: (v: PaymentState) => void;
 }) {
   const v = value;
-
   const set = <K extends keyof PaymentState>(k: K, val: PaymentState[K]) =>
     onChange({ ...v, [k]: val });
-
   const setOpt = <K extends keyof PaymentState["options"]>(
     k: K,
-    val: PaymentState["options"][K]
+    val: PaymentState["options"][K],
   ) => onChange({ ...v, options: { ...v.options, [k]: val } });
+
+  const applyTPAY = () => {
+    onChange({ ...v, userId: "5315236097", userName: "TPAY" });
+  };
 
   return (
     <section className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-neutral-400">Hazır Kullanıcı:</span>
+        <button
+          type="button"
+          className="rounded-full border border-emerald-600/40 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-300"
+          onClick={applyTPAY}
+        >
+          TPAY
+        </button>
+      </div>
+
       <div className="grid gap-3 md:grid-cols-2">
         <Field label="User ID" value={v.userId} onChange={(x) => set("userId", x)} />
         <Field label="User Name" value={v.userName} onChange={(x) => set("userName", x)} />
@@ -60,85 +66,39 @@ export default function StepPayment({
           value={String(v.amount)}
           onChange={(x) => set("amount", Number(x) || 0)}
         />
-        <Field
-          label="MSISDN"
-          value={v.msisdn}
-          onChange={(x) => set("msisdn", x)}
-          placeholder="5303589836"
-        />
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={v.threeDOperation}
-            onChange={(e) => set("threeDOperation", e.target.checked)}
-          />
-          <span>3D ile öde</span>
+        <Field label="MSISDN" value={v.msisdn} onChange={(x) => set("msisdn", x)} placeholder="5303589836" />
+
+        {/* 3D dropdown */}
+        <label className="block">
+          <div className="mb-1 text-sm">3D ile Öde</div>
+          <select
+            className="input"
+            value={String(v.threeDOperation)}
+            onChange={(e) => set("threeDOperation", e.target.value === "true")}
+          >
+            <option value="false">false</option>
+            <option value="true">true</option>
+          </select>
         </label>
-        {v.threeDOperation && (
-          <Field
-            label="threeDSessionID"
-            value={v.threeDSessionID ?? ""}
-            onChange={(x) => set("threeDSessionID", x)}
-            placeholder="3D session id"
-          />
-        )}
+
         <Field
           label="Taksit (0 = peşin)"
           type="number"
           value={String(v.installmentNumber)}
           onChange={(x) => set("installmentNumber", Number(x) || 0)}
         />
-        {/* paymentType şimdilik sabit kalacaksa kapalı tutalım */}
-        <div className="hidden">
-          <Field
-            label="Payment Type"
-            value={v.paymentType}
-            onChange={(x) =>
-              set("paymentType", x as PaymentState["paymentType"])
-            }
-          />
-        </div>
       </div>
 
       <div className="mt-2 grid gap-3 md:grid-cols-2">
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={v.options.includeMsisdnInOrderID}
-            onChange={(e) => setOpt("includeMsisdnInOrderID", e.target.checked)}
-          />
-          <span>includeMsisdnInOrderID</span>
-        </label>
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={v.options.checkCBBLForMsisdn}
-            onChange={(e) => setOpt("checkCBBLForMsisdn", e.target.checked)}
-          />
-          <span>checkCBBLForMsisdn</span>
-        </label>
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={v.options.checkCBBLForCard}
-            onChange={(e) => setOpt("checkCBBLForCard", e.target.checked)}
-          />
-          <span>checkCBBLForCard</span>
-        </label>
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={v.options.checkFraudStatus}
-            onChange={(e) => setOpt("checkFraudStatus", e.target.checked)}
-          />
-          <span>checkFraudStatus</span>
-        </label>
+        <Check label="includeMsisdnInOrderID" checked={v.options.includeMsisdnInOrderID} onChange={(on) => setOpt("includeMsisdnInOrderID", on)} />
+        <Check label="checkCBBLForMsisdn" checked={v.options.checkCBBLForMsisdn} onChange={(on) => setOpt("checkCBBLForMsisdn", on)} />
+        <Check label="checkCBBLForCard" checked={v.options.checkCBBLForCard} onChange={(on) => setOpt("checkCBBLForCard", on)} />
+        <Check label="checkFraudStatus" checked={v.options.checkFraudStatus} onChange={(on) => setOpt("checkFraudStatus", on)} />
       </div>
     </section>
   );
 }
 
-/* small input */
 function Field({
   label,
   value,
@@ -162,6 +122,22 @@ function Field({
         type={type ?? "text"}
         placeholder={placeholder}
       />
+    </label>
+  );
+}
+function Check({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <span>{label}</span>
     </label>
   );
 }
