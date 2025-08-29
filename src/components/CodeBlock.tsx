@@ -1,100 +1,124 @@
-// src/components/CodeBlock.tsx
 import { useMemo, useState } from 'react';
-import { Copy, Wand2 } from 'lucide-react';
 
-function pretty(input: unknown): { text: string; lang: 'json' | 'xml' | 'text' } {
-  if (typeof input === 'string') {
-    const s = input.trim();
-    // XML / SOAP
-    if (s.startsWith('<')) {
-      try {
-        const formatted = formatXml(s);
-        return { text: formatted, lang: 'xml' };
-      } catch { /* fallthrough */ }
-    }
-    // JSON
-    try {
-      const obj = JSON.parse(s);
-      return { text: JSON.stringify(obj, null, 2), lang: 'json' };
-    } catch { /* plain */ }
-    return { text: s, lang: s.startsWith('<') ? 'xml' : 'text' };
-  }
-  try {
-    return { text: JSON.stringify(input, null, 2), lang: 'json' };
-  } catch {
-    return { text: String(input ?? ''), lang: 'text' };
-  }
-}
-
-function formatXml(xml: string) {
-  const P = />(\s*)</g;
-  let formatted = '';
-  let pad = 0;
-  xml
-    .replace(P, '>\n<')
-    .split('\n')
-    .forEach((node) => {
-      if (!node) return;
-      let indent = 0;
-      if (node.match(/^<\/\w/)) pad--;
-      if (node.match(/^<\w[^>]*[^\/]>.*$/)) indent = 1;
-      formatted += '  '.repeat(pad) + node + '\n';
-      pad += indent;
-    });
-  return formatted.trim();
-}
-
+/** basit JSON/XML beautifier + kopyala butonlu codeblock */
 export default function CodeBlock({
   value,
+  lang,
   className = '',
 }: {
   value: unknown;
+  lang?: 'json' | 'xml' | 'text';
   className?: string;
 }) {
   const [copied, setCopied] = useState(false);
-  const [rawMode, setRawMode] = useState(false);
+  const [pretty, setPretty] = useState(true);
 
-  const prepared = useMemo(() => pretty(value), [value]);
-  const raw = useMemo(() => {
-    if (typeof value === 'string') return value;
-    try { return JSON.stringify(value); } catch { return String(value ?? ''); }
-  }, [value]);
+  const raw = useMemo(() => stringify(value), [value]);
+  const prettyText = useMemo(() => {
+    if (lang === 'json') return tryPrettyJSON(raw);
+    if (lang === 'xml') return tryPrettyXML(raw);
+    // otomatik algıla
+    if (!lang) {
+      if (looksLikeXML(raw)) return tryPrettyXML(raw);
+      if (looksLikeJSON(raw)) return tryPrettyJSON(raw);
+    }
+    return raw;
+  }, [raw, lang]);
 
-  const shown = rawMode ? raw : prepared.text;
+  const shown = pretty ? prettyText : raw;
+  const effectiveLang: 'json' | 'xml' | 'text' = lang
+    ? lang
+    : looksLikeXML(raw)
+    ? 'xml'
+    : looksLikeJSON(raw)
+    ? 'json'
+    : 'text';
 
-  const doCopy = async () => {
-    await navigator.clipboard.writeText(shown);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  };
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(shown);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {}
+  }
 
   return (
-    <div className={`rounded-xl border border-base-800 bg-base-900 ${className}`}>
-      <div className="flex items-center justify-between border-b border-base-800 px-2 py-1.5">
-        <div className="text-[11px] uppercase tracking-wider text-base-500">
-          {rawMode ? 'Raw' : prepared.lang.toUpperCase()}
+    <div className={`group relative overflow-hidden rounded-2xl border border-base-800 bg-base-900/70 ${className}`}>
+      {/* toolbar */}
+      <div className="flex items-center justify-between border-b border-base-800/80 px-3 py-2 text-xs">
+        <div className="flex items-center gap-2">
+          <span className="rounded bg-base-800 px-2 py-0.5 text-[10px] uppercase tracking-wider text-base-400">
+            {effectiveLang}
+          </span>
+          {(effectiveLang === 'json' || effectiveLang === 'xml') && (
+            <button
+              className="rounded-md border border-base-700 bg-base-900 px-2 py-1 text-[11px] text-base-200 hover:bg-base-800"
+              onClick={() => setPretty((s) => !s)}
+              type="button"
+            >
+              {pretty ? 'Raw göster' : 'Beautify'}
+            </button>
+          )}
         </div>
-        <div className="flex items-center gap-1.5">
-          <button
-            className="grid h-7 w-7 place-items-center rounded-md text-base-300 hover:bg-base-800"
-            onClick={() => setRawMode((s) => !s)}
-            title="Beautify / Raw"
-          >
-            <Wand2 size={16} />
-          </button>
-          <button
-            className="grid h-7 w-7 place-items-center rounded-md text-base-300 hover:bg-base-800"
-            onClick={doCopy}
-            title="Kopyala"
-          >
-            <Copy size={16} />
-          </button>
-          <span className="text-xs text-emerald-400">{copied ? 'Kopyalandı' : ''}</span>
-        </div>
+
+        <button
+          className="rounded-md border border-base-700 bg-base-900 px-2 py-1 text-[11px] text-base-200 hover:bg-base-800"
+          onClick={copy}
+          type="button"
+        >
+          {copied ? 'Kopyalandı' : 'Kopyala'}
+        </button>
       </div>
-      <pre className="max-h-[360px] overflow-auto p-3 text-[13px] leading-5 text-base-100">
+
+      {/* code */}
+      <pre className="max-h-[520px] overflow-auto p-3 text-[13px] leading-5 text-emerald-200">
         <code>{shown}</code>
       </pre>
     </div>
   );
+}
+
+/* ---------- helpers ---------- */
+function stringify(v: unknown) {
+  if (typeof v === 'string') return v;
+  try {
+    return JSON.stringify(v ?? {}, null, 2);
+  } catch {
+    return String(v);
+  }
+}
+function looksLikeJSON(s: string) {
+  const t = s.trim();
+  return (t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'));
+}
+function looksLikeXML(s: string) {
+  const t = s.trim();
+  return t.startsWith('<') && t.endsWith('>') && /<\/?[a-zA-Z]/.test(t);
+}
+function tryPrettyJSON(s: string) {
+  try {
+    return JSON.stringify(JSON.parse(s), null, 2);
+  } catch {
+    return s;
+  }
+}
+function tryPrettyXML(s: string) {
+  try {
+    // çok basit girinti: tag aralarına \n koy, seviyeye göre boşluk ekle
+    const xml = s.replace(/>\s*</g, '><').replace(/></g, '>\n<');
+    const lines = xml.split('\n');
+    let lvl = 0;
+    return lines
+      .map((line) => {
+        const openClose = /^<\/.+>/.test(line);
+        const self = /\/>$/.test(line) || /^<\?.+\?>$/.test(line) || /^<!.+>$/.test(line);
+        if (openClose) lvl = Math.max(0, lvl - 1);
+        const pad = '  '.repeat(lvl);
+        if (!openClose && !self && /^<[^/].+>.*$/.test(line) && !/>.*</.test(line)) lvl++;
+        return pad + line;
+      })
+      .join('\n');
+  } catch {
+    return s;
+  }
 }
