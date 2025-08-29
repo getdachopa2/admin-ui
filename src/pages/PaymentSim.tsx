@@ -61,58 +61,51 @@ export default function PaymentSim() {
 
   const abortRef = useRef<AbortController | null>(null);
 
-  const payload = useMemo(
-    () => ({
-      env,
-      channelId,
-      segment,
-      userId,
-      userName,
-      cardSelectionMode: cardMode,
-      ...(cardMode === 'manual' ? { manualCards } : {}),
+  const normMsisdn = (x: string) => {
+  let d = (x || '').replace(/\D+/g, '');
+  if (d.startsWith('0')) d = '90' + d.slice(1);
+  if (!d.startsWith('90')) d = '90' + d;
+  return d;
+};
 
-      application: {
-        applicationName,
-        applicationPassword,
-        secureCode,
-        transactionId,
-        transactionDateTime,
-      },
-      payment: {
-        paymentType,
-        threeDOperation,
-        installmentNumber,
-        options: {
-          includeMsisdnInOrderID: false,
-          checkCBBLForMsisdn: true,
-          checkCBBLForCard: true,
-          checkFraudStatus: false,
-        },
-      },
-      products: [{ amount, msisdn }],
-      runMode,
-    }),
-    [
-      env,
-      channelId,
-      segment,
-      userId,
-      userName,
-      cardMode,
-      manualCards,
-      applicationName,
-      applicationPassword,
-      secureCode,
-      transactionId,
-      transactionDateTime,
-      paymentType,
-      threeDOperation,
-      installmentNumber,
-      amount,
-      msisdn,
-      runMode,
-    ],
-  );
+const payload = {
+  env,
+  channelId,
+  segment,
+  userId,
+  userName,
+  cardSelectionMode: cardMode,
+  ...(cardMode === 'manual'
+    ? {
+        manualCards: manualCards.map(c => ({
+          ccno: c.creditCardNo.replace(/\s+/g, ''),
+          e_month: c.expireDateMonth,
+          e_year: c.expireDateYear,
+          cvv: c.cvcNo,
+        })),
+      }
+    : {}),
+  application: {
+    applicationName,
+    applicationPassword,
+    secureCode,
+    transactionId,
+    transactionDateTime,
+  },
+  payment: {
+    paymentType,
+    threeDOperation,
+    installmentNumber,
+    options: {
+      includeMsisdnInOrderID: false,
+      checkCBBLForMsisdn: true,
+      checkCBBLForCard: true,
+      checkFraudStatus: false,
+    },
+  },
+  products: [{ amount, msisdn: normMsisdn(msisdn) }],
+  runMode,
+};
 
   // ---- Actions ----
   const handleStart = useCallback(async () => {
