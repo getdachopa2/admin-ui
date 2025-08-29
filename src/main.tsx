@@ -1,18 +1,34 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import { createBrowserRouter, RouterProvider } from 'react-router-dom'
-import './index.css'
-import Shell from '@/shell/Shell'
-import Dashboard from '@/pages/Dashboard'
-import KanalKontrolBotu from '@/pages/KanalKontrolBotu'
+// src/main.tsx
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
+
+import Shell from '@/shell/Shell';
+import Dashboard from '@/pages/Dashboard';
+import KanalKontrolBotu from '@/pages/KanalKontrolBotu';
 
 const router = createBrowserRouter([
-  { path: '/', element: <Shell />, children: [
-    { index: true, element: <Dashboard /> },
-    { path: 'kanal-kontrol-botu', element: <KanalKontrolBotu /> },
-  ] }
-])
+  {
+    path: '/',
+    element: <Shell />,
+    children: [
+      { index: true, element: <Dashboard /> },
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode><RouterProvider router={router} /></StrictMode>
-)
+      // ✅ asıl sayfa
+      { path: 'kanal-kontrol-botu', element: <KanalKontrolBotu /> },
+
+      // ♻️ eski/yanlış linkleri yeni rotaya yönlendir
+      { path: 'kanal-kontrol', element: <Navigate to="/kanal-kontrol-botu" replace /> },
+      { path: 'kanal-kontrol-bot', element: <Navigate to="/kanal-kontrol-botu" replace /> },
+
+      // 🧹 diğer her şeyi ana sayfaya at
+      { path: '*', element: <Navigate to="/" replace /> },
+    ],
+  },
+]);
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <RouterProvider router={router} />
+  </React.StrictMode>,
+);
