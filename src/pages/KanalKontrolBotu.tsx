@@ -39,6 +39,42 @@ type AppState = {
   transactionDateTime: string;
 };
 
+/* ---------- highlight extractor (rapor için) ---------- */
+type Highlight = {
+  TOKEN?: string | null;
+  HASHDATA?: string | null;
+  SESSIONID?: string | null;
+  PAYMENTID?: string | null;
+  ORDERID?: string | null;
+};
+function extractHighlights(steps: Array<{ request?: any; response?: any; name: string }>): Highlight {
+  const h: Highlight = {};
+  for (const s of steps) {
+    const req = (s.request ?? {}) as any;
+    const res = (s.response ?? {}) as any;
+
+    if (h.TOKEN == null) {
+      h.TOKEN = res.cardToken ?? req.token ?? null;
+    }
+    if (h.HASHDATA == null) {
+      h.HASHDATA = req.hashData ?? null;
+    }
+    if (h.SESSIONID == null) {
+      h.SESSIONID = req.threeDSessionID ?? res.threeDSessionID ?? null;
+    }
+    if (h.PAYMENTID == null) {
+      h.PAYMENTID = res.paymentId ?? req.paymentId ?? null;
+    }
+    if (h.ORDERID == null) {
+      h.ORDERID = res.orderId ?? req.orderId ?? null;
+    }
+
+    // hepsi bulunduysa bitirebiliriz
+    if (h.TOKEN && h.PAYMENTID && h.ORDERID) break;
+  }
+  return h;
+}
+
 /* =================================================================== */
 export default function KanalKontrolBotu() {
   // Wizard modal
@@ -93,44 +129,31 @@ export default function KanalKontrolBotu() {
 
   // Çalıştırma / progress
   const [runKey, setRunKey] = useState<string | null>(null);
-  const { data: prog, error: progErr } = useProgress(runKey, 1200);
+  const { data: prog, error: progErr } = useProgress(runKey, 25);
   const steps = prog?.steps ?? [];
   const lastStep = steps[steps.length - 1];
   const running = prog?.status === "running";
+  const highlights = extractHighlights(steps);
 
   /* ---------- PAYLOAD (StartPayload ile birebir hizalı) ---------- */
   const payload = useMemo<StartPayload>(
     () => ({
-      // n8n "01. Normalize Env" bekliyor: stb/prp
       env: env === "STB" ? "stb" : "prp",
       channelId,
-      // segment'i sabit "X" kullanıyoruz (n8n Prepare Payment Data ile uyumlu)
       segment: "X",
-
-      // Application blok
       application: { ...app },
-
-      // User bilgileri ROOT seviyede (n8n header için)
       userId: payment.userId,
       userName: payment.userName,
-
-      // Payment toggles
       payment: {
         paymentType: payment.paymentType.toLowerCase() as "creditcard" | "debitcard" | "prepaidcard",
         threeDOperation: payment.threeDOperation,
         installmentNumber: payment.installmentNumber,
         options: { ...payment.options },
       },
-
-      // Ürün satırı (n8n Prepare Payment Data buradan okuyor)
       products: [{ amount: payment.amount, msisdn: normalizeMsisdn(payment.msisdn) }],
-
-      // Kart seçimi
       cardSelectionMode: mode,
       manualCards: mode === "manual" ? manualCards : undefined,
       cardCount: mode === "manual" ? manualCards.length : cardCount,
-
-      // Akış modu (bilgi amaçlı)
       runMode: "payment-only",
     }),
     [env, channelId, app, payment, mode, manualCards, cardCount],
@@ -174,17 +197,20 @@ export default function KanalKontrolBotu() {
 
       {/* Progress Panel */}
       {runKey && (
-        <div className="card p-6">
-          <div className="text-sm text-base-400">
-            Run Key: <code className="rounded bg-base-800 px-1 text-base-100">{runKey}</code>
-          </div>
-          <div className="mt-3">{running ? <IndeterminateBar /> : <SolidProgress value={100} />}</div>
-          {progErr && <div className="mt-2 text-sm text-red-400">Hata: {progErr}</div>}
+        <>
+          {/* Adımlar */}
+          <div className="card p-6">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-base-400">
+                Run Key: <code className="rounded bg-base-800 px-1 text-base-100">{runKey}</code>
+              </div>
+              <div className="w-56">{running ? <IndeterminateBar /> : <SolidProgress value={100} />}</div>
+            </div>
+            {progErr && <div className="mt-2 text-sm text-red-400">Hata: {progErr}</div>}
 
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <div className="card p-4">
+            <div className="mt-4">
               <div className="mb-2 font-medium">Adımlar</div>
-              <ul className="max-h-72 space-y-2 overflow-auto">
+              <ul className="max-h-80 space-y-2 overflow-auto">
                 {steps.map((s, i) => (
                   <li key={i} className="text-sm">
                     <div className="flex items-center gap-2">
@@ -203,48 +229,96 @@ export default function KanalKontrolBotu() {
                     <div className="ml-4 text-xs text-base-500">{new Date(s.time).toLocaleString()}</div>
                   </li>
                 ))}
+                {!steps.length && <li className="text-sm text-base-500">Henüz step oluşmadı…</li>}
               </ul>
             </div>
+          </div>
 
-            <div className="card p-4">
-              <div className="mb-2 font-medium">Son İstek / Yanıt</div>
-              {lastStep ? (
-                <div className="space-y-3">
-                  <div>
-                    <div className="mb-1 text-xs text-base-500">REQUEST</div>
-                    <CodeBlock value={lastStep.request ?? payload} lang="json" />
+          {/* Rapor */}
+          <div className="card p-6">
+            <div className="mb-2 font-medium">Rapor</div>
+
+            {running && !prog?.result && (
+              <div className="rounded-xl border border-base-800 bg-base-900 p-4 text-sm text-base-400">
+                Koşu sürüyor… Rapor hazır olduğunda burada görünecek.
+              </div>
+            )}
+
+            {/* Highlight chips */}
+            <div className="mb-3 flex flex-wrap gap-2">
+              {Object.entries(highlights).map(([k, v]) => (
+                <span
+                  key={k}
+                  className={`rounded-full border px-3 py-1 text-xs ${
+                    v ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10" : "border-base-700 text-base-400"
+                  }`}
+                  title={v || ""}
+                >
+                  {k}: {v ? (String(v).length > 14 ? String(v).slice(0, 6) + "…" + String(v).slice(-6) : v) : "—"}
+                </span>
+              ))}
+            </div>
+
+            {/* Kategoriler (step adına göre grupla) */}
+            <div className="grid gap-3 md:grid-cols-2">
+              {groupByName(steps).map(([name, arr]) => {
+                const last = arr[arr.length - 1];
+                const dot =
+                  last?.status === "success" ? "bg-emerald-500" : last?.status === "error" ? "bg-red-500" : "bg-amber-500";
+                return (
+                  <div key={name} className="rounded-xl border border-base-800 bg-base-900 p-3">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />
+                      <div className="font-medium">{name}</div>
+                      <span className="ml-2 rounded bg-base-800 px-2 py-0.5 text-xs text-base-400">{arr.length}</span>
+                    </div>
+                    <div className="text-sm text-base-300 line-clamp-2">{last?.message}</div>
                   </div>
-                  <div>
-                    <div className="mb-1 text-xs text-base-500">RESPONSE</div>
-                    <CodeBlock
-                      value={typeof lastStep.response === "string" ? lastStep.response : lastStep.response ?? {}}
-                      lang={
-                        typeof lastStep.response === "string" && (lastStep.response as string).trim().startsWith("<")
-                          ? "xml"
-                          : "json"
-                      }
-                    />
-                  </div>
+                );
+              })}
+              {!steps.length && (
+                <div className="rounded-xl border border-base-800 bg-base-900 p-3 text-sm text-base-400">
+                  Kategori bulunamadı.
                 </div>
-              ) : (
-                <div className="text-sm text-base-500">Henüz step oluşmadı.</div>
               )}
             </div>
+
+            {/* Özet metni (n8n finalize) */}
+            {prog?.result?.summary && (
+              <div className="mt-4 rounded-xl border border-emerald-700/40 bg-emerald-900/10 p-3 text-sm text-emerald-300">
+                {prog.result.summary}
+              </div>
+            )}
           </div>
-        </div>
+
+          {/* Son İstek / Yanıt — tam genişlik */}
+          <div className="card p-6">
+            <div className="mb-2 font-medium">Son İstek / Yanıt</div>
+            {lastStep ? (
+              <div className="space-y-3">
+                <div>
+                  <div className="mb-1 text-xs text-base-500">REQUEST</div>
+                  <CodeBlock value={lastStep.request ?? payload} lang="json" />
+                </div>
+                <div>
+                  <div className="mb-1 text-xs text-base-500">RESPONSE</div>
+                  <CodeBlock
+                    value={typeof lastStep.response === "string" ? lastStep.response : lastStep.response ?? {}}
+                    lang={
+                      typeof lastStep.response === "string" &&
+                      (lastStep.response as string).trim().startsWith("<")
+                        ? "xml"
+                        : "json"
+                    }
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-base-500">Henüz step oluşmadı.</div>
+            )}
+          </div>
+        </>
       )}
-
-      {prog && prog.status !== 'running' && (
-  <div className="card p-6 mt-4">
-    <div className="mb-2 font-medium">Rapor</div>
-    {prog.result ? (
-      <CodeBlock value={prog.result} lang="json" />
-    ) : (
-      <div className="text-sm text-base-500">Rapor verisi gelmedi.</div>
-    )}
-  </div>
-)}
-
 
       {/* Wizard */}
       <Modal open={wizardOpen} onClose={() => setWizardOpen(false)} title={`Wizard — ${STEP_LABELS[step - 1]}`}>
@@ -358,27 +432,11 @@ export default function KanalKontrolBotu() {
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
-              <Field
-                label="applicationName"
-                value={app.applicationName}
-                onChange={(v) => setApp((a) => ({ ...a, applicationName: v }))}
-              />
-              <Field
-                label="applicationPassword"
-                value={app.applicationPassword}
-                onChange={(v) => setApp((a) => ({ ...a, applicationPassword: v }))}
-              />
+              <Field label="applicationName" value={app.applicationName} onChange={(v) => setApp((a) => ({ ...a, applicationName: v }))} />
+              <Field label="applicationPassword" value={app.applicationPassword} onChange={(v) => setApp((a) => ({ ...a, applicationPassword: v }))} />
               <Field label="secureCode" value={app.secureCode} onChange={(v) => setApp((a) => ({ ...a, secureCode: v }))} />
-              <Field
-                label="transactionId"
-                value={app.transactionId}
-                onChange={(v) => setApp((a) => ({ ...a, transactionId: v }))}
-              />
-              <Field
-                label="transactionDateTime"
-                value={app.transactionDateTime}
-                onChange={(v) => setApp((a) => ({ ...a, transactionDateTime: v }))}
-              />
+              <Field label="transactionId" value={app.transactionId} onChange={(v) => setApp((a) => ({ ...a, transactionId: v }))} />
+              <Field label="transactionDateTime" value={app.transactionDateTime} onChange={(v) => setApp((a) => ({ ...a, transactionDateTime: v }))} />
             </div>
 
             <div className="mt-6 flex justify-between">
@@ -396,12 +454,7 @@ export default function KanalKontrolBotu() {
         {step === 4 && (
           <section className="space-y-4">
             <div className="grid items-end gap-3 md:grid-cols-3">
-              <Field
-                label="Kart Adedi"
-                type="number"
-                value={String(cardCount)}
-                onChange={(v) => setCardCount(Number(v) || 0)}
-              />
+              <Field label="Kart Adedi" type="number" value={String(cardCount)} onChange={(v) => setCardCount(Number(v) || 0)} />
               <label className="flex items-center gap-2">
                 <input type="radio" checked={mode === "automatic"} onChange={() => setMode("automatic")} />
                 <span>Automatic (DB'den random aktif 10 kart)</span>
@@ -434,10 +487,7 @@ export default function KanalKontrolBotu() {
                       <Field label="CVV" value={c.cvv} onChange={(v) => updCard(idx, "cvv", v)} />
                       <div className="flex items-end gap-2">
                         <Field label="Banka" value={c.bank_code || ""} onChange={(v) => updCard(idx, "bank_code", v)} />
-                        <button
-                          className="h-10 rounded-xl border border-base-700 px-3 text-sm hover:bg-base-900"
-                          onClick={() => delCard(idx)}
-                        >
+                        <button className="h-10 rounded-xl border border-base-700 px-3 text-sm hover:bg-base-900" onClick={() => delCard(idx)}>
                           Sil
                         </button>
                       </div>
@@ -493,7 +543,7 @@ export default function KanalKontrolBotu() {
                 <Summary label="USER" value={`${payment.userName} (${payment.userId || "-"})`} />
               </div>
               <div className="mt-3 rounded border border-base-800 px-3 py-2 text-xs text-base-400">
-                Çalıştırma Modu bilgisi: Kuyruk modunda sonuç arka planda takip edilir (polling).
+                Çalıştırma Modu bilgisi: Kuyruk modunda sonuç arka planda takip edilir (long-poll).
               </div>
             </div>
 
@@ -591,4 +641,15 @@ function toggleScenario(
   const next = new Set(list.filter((s) => s !== "all"));
   checked ? next.add(key) : next.delete(key);
   setList([...next]);
+}
+
+function groupByName<T extends { name: string }>(arr: T[]): [string, T[]][] {
+  const m = new Map<string, T[]>();
+  for (const it of arr) {
+    const k = it.name || "-";
+    const prev = m.get(k) || [];
+    prev.push(it);
+    m.set(k, prev);
+  }
+  return Array.from(m.entries());
 }
