@@ -31,7 +31,7 @@ type AppState = {
   transactionDateTime: string;
 };
 
-/* ---------- highlight extractor (rapor için) ---------- */
+/* ---------- highlight extractor (global özet için) ---------- */
 type Highlight = {
   TOKEN?: string | null;
   HASHDATA?: string | null;
@@ -44,14 +44,122 @@ function extractHighlights(steps: Array<{ request?: any; response?: any; name: s
   for (const s of steps) {
     const req = (s.request ?? {}) as any;
     const res = (s.response ?? {}) as any;
-    if (h.TOKEN == null) h.TOKEN = res.cardToken ?? req.token ?? null;
-    if (h.HASHDATA == null) h.HASHDATA = req.hashData ?? null;
-    if (h.SESSIONID == null) h.SESSIONID = req.threeDSessionID ?? res.threeDSessionID ?? null;
-    if (h.PAYMENTID == null) h.PAYMENTID = res.paymentId ?? req.paymentId ?? null;
-    if (h.ORDERID == null) h.ORDERID = res.orderId ?? req.orderId ?? null;
+    //if (h.TOKEN == null) h.TOKEN = res.cardToken ?? res.token ?? req.token ?? null;
+    //if (h.HASHDATA == null) h.HASHDATA = req.hashData ?? req.HASHDATA ?? null;
+    //if (h.SESSIONID == null) h.SESSIONID = req.threeDSessionID ?? res.threeDSessionID ?? null;
+    //if (h.PAYMENTID == null) h.PAYMENTID = res.paymentId ?? req.paymentId ?? null;
+    //if (h.ORDERID == null) h.ORDERID = res.orderId ?? req.orderId ?? null;
     if (h.TOKEN && h.PAYMENTID && h.ORDERID) break;
   }
   return h;
+}
+
+/* ---------- Senaryo tespiti + chip üretimi ---------- */
+type BlockType = "request" | "response";
+
+function scenarioOfStepName(name: string): "token" | "payment" | "cancel" | "refund" | "other" {
+  const t = (name || "").toLowerCase();
+  if (/token|card\s*token|hash/.test(t)) return "token";
+  if (/refund|iade/.test(t)) return "refund";
+  if (/cancel|void|iptal/.test(t)) return "cancel";
+  if (/payment|pay|ödeme/.test(t)) return "payment";
+  return "other";
+}
+
+const SCENARIO_LABEL: Record<ReturnType<typeof scenarioOfStepName>, string> = {
+  token: "Token Alma",
+  payment: "Ödeme",
+  cancel: "İptal",
+  refund: "İade",
+  other: "Diğer",
+};
+
+const normKey = (k: string) => k.toLowerCase().replace(/[_\-\s]/g, "");
+function deepPick(obj: unknown, keys: string[]): string | null {
+  if (obj == null) return null;
+  const wanted = keys.map(normKey);
+  const stack: any[] = [obj];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (typeof cur !== "object") continue;
+    for (const [k, v] of Object.entries(cur as Record<string, any>)) {
+      if (wanted.includes(normKey(k))) {
+        if (v == null) continue;
+        const val = typeof v === "object" ? JSON.stringify(v) : String(v);
+        if (val !== "undefined" && val !== "null" && val !== "") return val;
+      }
+      if (v && typeof v === "object") stack.push(v);
+    }
+  }
+  return null;
+}
+function pickFromXml(xml: string, tags: string[]): string | null {
+  const txt = (xml || "").toString();
+  for (const tag of tags) {
+    const re = new RegExp(`<\\s*${tag}\\s*>\\s*([^<]+)\\s*<\\s*/\\s*${tag}\\s*>`, "i");
+    const m = txt.match(re);
+    if (m?.[1]) return m[1];
+  }
+  return null;
+}
+
+function chipsForStep(
+  s: { name: string; request?: unknown; response?: unknown },
+  block: BlockType,
+): Array<{ label: string; value: string | null }> {
+  const req = s.request as any;
+  const res = s.response as any;
+  const scen = scenarioOfStepName(s.name);
+  const isXmlRes = typeof res === "string" && (res as string).trim().startsWith("<");
+
+  const findOrderId = (src: any) =>
+    typeof src === "string"
+      ? pickFromXml(src, ["ORDER_ID", "ORDERID"])
+      : deepPick(src, ["orderId", "ORDER_ID", "ORDERID"]);
+  const findPaymentId = (src: any) =>
+    typeof src === "string"
+      ? pickFromXml(src, ["PAYMENT_ID", "PAYMENTID"])
+      : deepPick(src, ["paymentId", "PAYMENT_ID", "PAYMENTID"]);
+  const findToken = (src: any) =>
+    typeof src === "string"
+      ? pickFromXml(src, ["TOKEN", "CARDTOKEN"])
+      : deepPick(src, ["token", "cardToken"]);
+  const findHash = (src: any) => deepPick(src, ["hashData", "HASHDATA"]);
+
+  const chips: Array<{ label: string; value: string | null }> = [];
+
+  if (scen === "token") {
+    if (block === "request") chips.push({ label: "HASHDATA", value: findHash(req) });
+    else chips.push({ label: "TOKEN", value: findToken(res) });
+  } else if (scen === "payment") {
+    if (block === "request") {
+      chips.push({ label: "ORDERID", value: findOrderId(req) });
+      chips.push({ label: "PAYMENTID", value: findPaymentId(req) });
+    } else {
+      chips.push({ label: "ORDER_ID", value: isXmlRes ? pickFromXml(res, ["ORDER_ID", "ORDERID"]) : findOrderId(res) });
+      chips.push({ label: "PAYMENT_ID", value: isXmlRes ? pickFromXml(res, ["PAYMENT_ID", "PAYMENTID"]) : findPaymentId(res) });
+    }
+  } else if (scen === "cancel" || scen === "refund") {
+    if (block === "request") {
+      chips.push({ label: "PAYMENT_ID", value: findPaymentId(req) });
+    } else {
+      chips.push({ label: "ORDER_ID", value: isXmlRes ? pickFromXml(res, ["ORDER_ID", "ORDERID"]) : findOrderId(res) });
+    }
+  }
+
+  return chips.filter((c) => c.value);
+}
+
+function ChipInline({ label, value }: { label: string; value?: string | null }) {
+  if (!value) return null;
+  return (
+    <span
+      className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300 break-all whitespace-pre-wrap"
+      title={String(value)}
+    >
+      {label}: <span className="font-mono">{String(value)}</span>
+    </span>
+  );
 }
 
 /* =================================================================== */
@@ -110,7 +218,6 @@ export default function KanalKontrolBotu() {
   const [runKey, setRunKey] = useState<string | null>(null);
   const { data: prog, error: progErr } = useProgress(runKey, 25);
   const steps = prog?.steps ?? [];
-  const lastStep = steps[steps.length - 1];
   const running = prog?.status === "running";
   const highlights = extractHighlights(steps);
 
@@ -176,6 +283,19 @@ export default function KanalKontrolBotu() {
     saveRun(toSave);
   }, [prog?.status]); // eslint-disable-line
 
+  /* ----- Senaryoya göre grupla (accordion üst başlıkları) ----- */
+  const groupedByScenario = useMemo(() => {
+    const map = new Map<string, typeof httpSteps>();
+    for (const s of httpSteps) {
+      const key = scenarioOfStepName(s.name);
+      const k = SCENARIO_LABEL[key];
+      const arr = map.get(k) || [];
+      arr.push(s);
+      map.set(k, arr);
+    }
+    return Array.from(map.entries()); // [label, steps[]]
+  }, [httpSteps]);
+
   return (
     <div className="space-y-6">
       {/* Üst kart */}
@@ -237,7 +357,7 @@ export default function KanalKontrolBotu() {
             </div>
           </div>
 
-          {/* Rapor (sadece HTTP request içerenler) */}
+          {/* Rapor (accordion) */}
           <div className="card p-6">
             <div className="mb-2 font-medium">Rapor</div>
 
@@ -247,38 +367,40 @@ export default function KanalKontrolBotu() {
               </div>
             )}
 
-            {/* Ana highlight'lar */}
+            {/* Global highlight özet */}
             <div className="mb-3 flex flex-wrap gap-2">
               {Object.entries(highlights).map(([k, v]) => (
                 <span
                   key={k}
-                  className={`rounded-full border px-3 py-1 text-xs ${
-                    v ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10" : "border-base-700 text-base-400"
-                  }`}
-                  title={v || ""}
+                    className={`rounded-full border px-3 py-1 text-xs break-all whitespace-pre-wrap ${
+    v ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10" : "border-base-700 text-base-400"
+  }`}
+  title={v || ""}
                 >
                   {k}: {v ? (String(v).length > 22 ? String(v).slice(0, 8) + "…" + String(v).slice(-8) : v) : "—"}
                 </span>
               ))}
             </div>
 
-            {/* HTTP kategorileri: step name'e göre grupla, sadece request/response olanları göster */}
+            {/* ANA ACCORDION: Senaryo başlıkları */}
             <div className="space-y-3">
-              {groupByName(httpSteps).map(([name, arr]) => {
-                const last = arr[arr.length - 1];
+              {groupedByScenario.map(([label, items]) => {
+                const last = items[items.length - 1];
                 const dot =
                   last?.status === "success" ? "bg-emerald-500" : last?.status === "error" ? "bg-red-500" : "bg-amber-500";
                 return (
-                  <div key={name} className="rounded-xl border border-base-800 bg-base-900">
-                    <div className="flex items-center gap-2 border-b border-base-800 px-3 py-2">
+                  <details key={label} className="rounded-xl border border-base-800 bg-base-900">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2">
                       <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />
-                      <div className="font-medium">{name}</div>
-                      <span className="ml-2 rounded bg-base-800 px-2 py-0.5 text-xs text-base-400">{arr.length}</span>
-                    </div>
+                      <div className="font-medium">{label}</div>
+                      <span className="ml-2 rounded bg-base-800 px-2 py-0.5 text-xs text-base-400">
+                        {items.length}
+                      </span>
+                    </summary>
 
-                    {/* bu kategorideki TÜM http istekleri */}
+                    {/* İçerik: Bu senaryodaki tüm http istekleri */}
                     <div className="divide-y divide-base-800">
-                      {arr.map((s, idx) => (
+                      {items.map((s, idx) => (
                         <div key={idx} className="p-3">
                           <div className="mb-2 flex items-center justify-between text-xs text-base-400">
                             <span>{new Date(s.time).toLocaleString()}</span>
@@ -297,13 +419,25 @@ export default function KanalKontrolBotu() {
 
                           {s.request !== undefined && (
                             <div className="mb-2">
-                              <div className="mb-1 text-[11px] text-base-500">REQUEST</div>
+                              <div className="mb-1 flex items-center gap-2 text-[11px] text-base-500">
+                                <span>REQUEST</span>
+                                {/* inline highlight chips */}
+                                {chipsForStep(s, "request").map((c) => (
+                                  <ChipInline key={c.label + c.value} label={c.label} value={c.value ?? undefined} />
+                                ))}
+                              </div>
                               <CodeBlock value={s.request} lang="json" />
                             </div>
                           )}
+
                           {s.response !== undefined && (
                             <div>
-                              <div className="mb-1 text-[11px] text-base-500">RESPONSE</div>
+                              <div className="mb-1 flex items-center gap-2 text-[11px] text-base-500">
+                                <span>RESPONSE</span>
+                                {chipsForStep(s, "response").map((c) => (
+                                  <ChipInline key={c.label + c.value} label={c.label} value={c.value ?? undefined} />
+                                ))}
+                              </div>
                               <CodeBlock
                                 value={typeof s.response === "string" ? s.response : s.response ?? {}}
                                 lang={
@@ -317,7 +451,7 @@ export default function KanalKontrolBotu() {
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </details>
                 );
               })}
 
@@ -329,32 +463,7 @@ export default function KanalKontrolBotu() {
             </div>
           </div>
 
-          {/* Son İstek / Yanıt — tam genişlik */}
-          <div className="card p-6">
-            <div className="mb-2 font-medium">Son İstek / Yanıt</div>
-            {lastStep ? (
-              <div className="space-y-3">
-                <div>
-                  <div className="mb-1 text-xs text-base-500">REQUEST</div>
-                  <CodeBlock value={lastStep.request ?? payload} lang="json" />
-                </div>
-                <div>
-                  <div className="mb-1 text-xs text-base-500">RESPONSE</div>
-                  <CodeBlock
-                    value={typeof lastStep.response === "string" ? lastStep.response : lastStep.response ?? {}}
-                    lang={
-                      typeof lastStep.response === "string" &&
-                      (lastStep.response as string).trim().startsWith("<")
-                        ? "xml"
-                        : "json"
-                    }
-                  />
-                </div>
-              </div>
-            ) : (
-              <div className="text-sm text-base-500">Henüz step oluşmadı.</div>
-            )}
-          </div>
+          {/* “Son İstek / Yanıt” bölümü kaldırıldı */}
         </>
       )}
 
@@ -423,7 +532,7 @@ export default function KanalKontrolBotu() {
           </section>
         )}
 
-        {/* Step 3 — Application Bilgileri (default boş, preset opsiyonel) */}
+        {/* Step 3 — Application Bilgileri */}
         {step === 3 && (
           <section className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -683,14 +792,3 @@ function toggleScenario(
   checked ? next.add(key) : next.delete(key);
   setList([...next]);
 }
-
-function groupByName<T extends { name: string }>(arr: T[]): [string, T[]][] {
-  const m = new Map<string, T[]>();
-  for (const it of arr) {
-    const k = it.name || "-";
-    const prev = m.get(k) || [];
-    prev.push(it);
-    m.set(k, prev);
-  }
-  return Array.from(m.entries());
-};
