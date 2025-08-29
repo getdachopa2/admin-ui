@@ -4,6 +4,7 @@ import { IndeterminateBar, SolidProgress } from "@/components/ProgressBar";
 import CodeBlock from "@/components/CodeBlock";
 import { useProgress } from "@/hooks/useProgress";
 import { startPayment, type StartPayload } from "@/lib/n8nClient";
+import StepPayment, { normalizeMsisdn, type PaymentState } from "@/components/wizard/StepPayment";
 
 /* ---------- helpers ---------- */
 function randDigits(n: number) {
@@ -41,7 +42,7 @@ type AppState = {
 export default function KanalKontrolBotu() {
   // Wizard modal
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [step, setStep] = useState(1 as 1 | 2 | 3 | 4 | 5);
+  const [step, setStep] = useState(1 as 1 | 2 | 3 | 4 | 5 | 6);
 
   // Step 1 — senaryo
   const [scenarios, setScenarios] = useState<ScenarioKey[]>(["payment"]);
@@ -72,6 +73,24 @@ export default function KanalKontrolBotu() {
     setManualCards((cs) => cs.map((c, idx) => (idx === i ? { ...c, [k]: v } : c)));
   const delCard = (i: number) => setManualCards((cs) => cs.filter((_, idx) => idx !== i));
 
+  // Step 5 — ödeme bilgileri
+  const [payment, setPayment] = useState<PaymentState>({
+    userId: "",
+    userName: "",
+    threeDOperation: false,
+    threeDSessionID: "",
+    installmentNumber: 0,
+    amount: 10,
+    msisdn: "5303589836",
+    paymentType: "CREDITCARD",
+    options: {
+      includeMsisdnInOrderID: false,
+      checkCBBLForMsisdn: true,
+      checkCBBLForCard: true,
+      checkFraudStatus: false,
+    },
+  });
+
   // Çalıştırma / progress
   const [runKey, setRunKey] = useState<string | null>(null);
   const { data: prog, error: progErr } = useProgress(runKey, 1200);
@@ -79,28 +98,27 @@ export default function KanalKontrolBotu() {
   const lastStep = steps[steps.length - 1];
   const running = prog?.status === "running";
 
-  // n8n payload
+  // n8n payload (payment adımıyla senkron)
   const payload = useMemo<StartPayload>(
     () => ({
       application: { ...app },
       payment: {
-        amount: 10,
-        msisdn: "5303589836",
-        threeDOperation: false,
-        installmentNumber: 0,
-        options: {
-          includeMsisdnInOrderID: false,
-          checkCBBLForMsisdn: true,
-          checkCBBLForCard: true,
-          checkFraudStatus: false,
-        },
-      },
+        amount: payment.amount,
+        msisdn: normalizeMsisdn(payment.msisdn),
+        threeDOperation: payment.threeDOperation,
+        installmentNumber: payment.installmentNumber,
+        paymentType: payment.paymentType,
+        ...(payment.threeDOperation ? { threeDSessionID: payment.threeDSessionID } : {}),
+        userId: payment.userId,
+        userName: payment.userName,
+        options: { ...payment.options },
+      } as any, // n8nClient tarafındaki tip kısıtına takılmamak için
       cardSelectionMode: mode,
       manualCards: mode === "manual" ? manualCards : undefined,
       channelId,
       segment: env,
     }),
-    [app, mode, manualCards, channelId, env],
+    [app, payment, mode, manualCards, channelId, env],
   );
 
   async function onStart() {
@@ -120,15 +138,24 @@ export default function KanalKontrolBotu() {
   return (
     <div className="space-y-6">
       {/* Üst kart */}
-      
+      <div className="card p-6">
         <h1 className="mb-2 text-2xl font-bold tracking-tight text-base-100">Kanal Kontrol Botu</h1>
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Kanal Kontrol Botu</h1>
-        <button className="btn" onClick={() => { setStep(1); setWizardOpen(true); }}>
+        <p className="max-w-3xl text-sm leading-6 text-base-300">
+          Token / ödeme / iptal / iade akışlarını sihirbazla tetikle. Adımlar canlı raporlanır; tamamlanınca
+          request/response blokları görünür.
+        </p>
+        <div className="mt-4">
+          <button
+            className="btn"
+            onClick={() => {
+              setStep(1);
+              setWizardOpen(true);
+            }}
+          >
             Sihirbazı Aç
           </button>
         </div>
-      
+      </div>
 
       {/* Progress Panel */}
       {runKey && (
@@ -148,7 +175,11 @@ export default function KanalKontrolBotu() {
                     <div className="flex items-center gap-2">
                       <span
                         className={`inline-block h-2 w-2 rounded-full ${
-                          s.status === "success" ? "bg-emerald-500" : s.status === "error" ? "bg-red-500" : "bg-amber-500"
+                          s.status === "success"
+                            ? "bg-emerald-500"
+                            : s.status === "error"
+                            ? "bg-red-500"
+                            : "bg-amber-500"
                         }`}
                       />
                       <span className="font-medium">{s.name}</span>
@@ -172,7 +203,12 @@ export default function KanalKontrolBotu() {
                     <div className="mb-1 text-xs text-base-500">RESPONSE</div>
                     <CodeBlock
                       value={typeof lastStep.response === "string" ? lastStep.response : lastStep.response ?? {}}
-                      lang={typeof lastStep.response === "string" && (lastStep.response as string).trim().startsWith("<") ? "xml" : "json"}
+                      lang={
+                        typeof lastStep.response === "string" &&
+                        (lastStep.response as string).trim().startsWith("<")
+                          ? "xml"
+                          : "json"
+                      }
                     />
                   </div>
                 </div>
@@ -188,7 +224,7 @@ export default function KanalKontrolBotu() {
       <Modal open={wizardOpen} onClose={() => setWizardOpen(false)} title={`Wizard — ${STEP_LABELS[step - 1]}`}>
         <StepBar step={step} labels={STEP_LABELS} />
 
-        {/* Step 1 */}
+        {/* Step 1 — Senaryo */}
         {step === 1 && (
           <section className="space-y-3">
             <div className="text-sm text-base-300">Çalıştırılacak senaryoyu seçin.</div>
@@ -197,7 +233,9 @@ export default function KanalKontrolBotu() {
                 <label
                   key={k}
                   className={`group flex cursor-pointer items-center justify-between rounded-xl border p-3 ${
-                    scenarios.includes(k) ? "border-emerald-500/50 bg-emerald-500/10" : "border-base-800 bg-base-900 hover:border-base-700"
+                    scenarios.includes(k)
+                      ? "border-emerald-500/50 bg-emerald-500/10"
+                      : "border-base-800 bg-base-900 hover:border-base-700"
                   }`}
                   title={SCENARIOS[k].tip}
                 >
@@ -221,7 +259,7 @@ export default function KanalKontrolBotu() {
           </section>
         )}
 
-        {/* Step 2 */}
+        {/* Step 2 — Ortam & Kanal */}
         {step === 2 && (
           <section className="space-y-4">
             <div className="grid gap-3 md:grid-cols-2">
@@ -247,28 +285,74 @@ export default function KanalKontrolBotu() {
           </section>
         )}
 
-        {/* Step 3 */}
+        {/* Step 3 — Application Bilgileri */}
         {step === 3 && (
           <section className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-base-400">Hazır Application:</span>
-              <button className={`chip ${app.applicationName === "PAYCELLTEST" ? "border-emerald-500 bg-emerald-500/15 text-emerald-300" : ""}`} onClick={() => setApp({ ...PRESET, applicationName: "PAYCELLTEST", applicationPassword: "", secureCode: "", transactionId: "", transactionDateTime: "" })}>
+              <button
+                className={`chip ${
+                  app.applicationName === "PAYCELLTEST" ? "border-emerald-500 bg-emerald-500/15 text-emerald-300" : ""
+                }`}
+                onClick={() =>
+                  setApp({
+                    ...PRESET,
+                    applicationName: "PAYCELLTEST",
+                    applicationPassword: "",
+                    secureCode: "",
+                    transactionId: "",
+                    transactionDateTime: "",
+                  })
+                }
+              >
                 PAYCELLTEST
               </button>
-              <button className={`chip ${app.applicationName === "SENSAT" ? "border-emerald-500 bg-emerald-500/15 text-emerald-300" : ""}`} onClick={() => setApp({ ...PRESET })}>
+              <button
+                className={`chip ${
+                  app.applicationName === "SENSAT" ? "border-emerald-500 bg-emerald-500/15 text-emerald-300" : ""
+                }`}
+                onClick={() => setApp({ ...PRESET })}
+              >
                 SENSAT
               </button>
-              <button className="chip" onClick={() => setApp({ applicationName: "", applicationPassword: "", secureCode: "", transactionId: "", transactionDateTime: "" })}>
+              <button
+                className="chip"
+                onClick={() =>
+                  setApp({
+                    applicationName: "",
+                    applicationPassword: "",
+                    secureCode: "",
+                    transactionId: "",
+                    transactionDateTime: "",
+                  })
+                }
+              >
                 Temizle
               </button>
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
-              <Field label="applicationName" value={app.applicationName} onChange={(v) => setApp((a) => ({ ...a, applicationName: v }))} />
-              <Field label="applicationPassword" value={app.applicationPassword} onChange={(v) => setApp((a) => ({ ...a, applicationPassword: v }))} />
+              <Field
+                label="applicationName"
+                value={app.applicationName}
+                onChange={(v) => setApp((a) => ({ ...a, applicationName: v }))}
+              />
+              <Field
+                label="applicationPassword"
+                value={app.applicationPassword}
+                onChange={(v) => setApp((a) => ({ ...a, applicationPassword: v }))}
+              />
               <Field label="secureCode" value={app.secureCode} onChange={(v) => setApp((a) => ({ ...a, secureCode: v }))} />
-              <Field label="transactionId" value={app.transactionId} onChange={(v) => setApp((a) => ({ ...a, transactionId: v }))} />
-              <Field label="transactionDateTime" value={app.transactionDateTime} onChange={(v) => setApp((a) => ({ ...a, transactionDateTime: v }))} />
+              <Field
+                label="transactionId"
+                value={app.transactionId}
+                onChange={(v) => setApp((a) => ({ ...a, transactionId: v }))}
+              />
+              <Field
+                label="transactionDateTime"
+                value={app.transactionDateTime}
+                onChange={(v) => setApp((a) => ({ ...a, transactionDateTime: v }))}
+              />
             </div>
 
             <div className="mt-6 flex justify-between">
@@ -282,11 +366,16 @@ export default function KanalKontrolBotu() {
           </section>
         )}
 
-        {/* Step 4 */}
+        {/* Step 4 — Kart/Test Verisi */}
         {step === 4 && (
           <section className="space-y-4">
             <div className="grid items-end gap-3 md:grid-cols-3">
-              <Field label="Kart Adedi" type="number" value={String(cardCount)} onChange={(v) => setCardCount(Number(v) || 0)} />
+              <Field
+                label="Kart Adedi"
+                type="number"
+                value={String(cardCount)}
+                onChange={(v) => setCardCount(Number(v) || 0)}
+              />
               <label className="flex items-center gap-2">
                 <input type="radio" checked={mode === "automatic"} onChange={() => setMode("automatic")} />
                 <span>Automatic (DB'den random aktif 10 kart)</span>
@@ -305,7 +394,9 @@ export default function KanalKontrolBotu() {
 
                 <div className="mt-2 flex items-center justify-between">
                   <div className="font-medium">Kartlar</div>
-                  <button className="btn-outline" onClick={addCard}>Kart Ekle</button>
+                  <button className="btn-outline" onClick={addCard}>
+                    Kart Ekle
+                  </button>
                 </div>
 
                 <div className="max-h-72 space-y-3 overflow-auto">
@@ -317,13 +408,18 @@ export default function KanalKontrolBotu() {
                       <Field label="CVV" value={c.cvv} onChange={(v) => updCard(idx, "cvv", v)} />
                       <div className="flex items-end gap-2">
                         <Field label="Banka" value={c.bank_code || ""} onChange={(v) => updCard(idx, "bank_code", v)} />
-                        <button className="h-10 rounded-xl border border-base-700 px-3 text-sm hover:bg-base-900" onClick={() => delCard(idx)}>
+                        <button
+                          className="h-10 rounded-xl border border-base-700 px-3 text-sm hover:bg-base-900"
+                          onClick={() => delCard(idx)}
+                        >
                           Sil
                         </button>
                       </div>
                     </div>
                   ))}
-                  {manualCards.length === 0 && <div className="text-sm text-base-400">Henüz kart eklenmedi.</div>}
+                  {manualCards.length === 0 && (
+                    <div className="text-sm text-base-400">Henüz kart eklenmedi.</div>
+                  )}
                 </div>
               </>
             )}
@@ -339,8 +435,23 @@ export default function KanalKontrolBotu() {
           </section>
         )}
 
-        {/* Step 5 */}
+        {/* Step 5 — Ödeme Bilgileri */}
         {step === 5 && (
+          <section className="space-y-4">
+            <StepPayment value={payment} onChange={setPayment} />
+            <div className="mt-6 flex justify-between">
+              <button className="btn-outline" onClick={() => setStep(4)}>
+                Geri
+              </button>
+              <button className="btn" onClick={() => setStep(6)}>
+                İleri
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* Step 6 — Özet & Çalıştır */}
+        {step === 6 && (
           <section className="space-y-4">
             <div className="card p-4">
               <div className="grid gap-3 text-sm md:grid-cols-3">
@@ -350,8 +461,12 @@ export default function KanalKontrolBotu() {
                 <Summary label="APPLICATIONNAME" value={app.applicationName} />
                 <Summary label="TRANSACTIONID" value={app.transactionId} />
                 <Summary label="TRANSACTIONDATETIME" value={app.transactionDateTime} />
-                <Summary label="ÇALIŞTIRMA" value={"Kuyruk (polling)"} />
-                <Summary label="KART ADEDİ" value={String(cardCount)} />
+                <Summary label="KART ADEDİ" value={String(mode === "manual" ? manualCards.length : cardCount)} />
+                <Summary label="MSISDN" value={normalizeMsisdn(payment.msisdn)} />
+                <Summary label="TUTAR" value={String(payment.amount)} />
+                <Summary label="3D" value={String(payment.threeDOperation)} />
+                <Summary label="TAKSİT" value={String(payment.installmentNumber)} />
+                <Summary label="USER" value={`${payment.userName} (${payment.userId || "-"})`} />
               </div>
               <div className="mt-3 rounded border border-base-800 px-3 py-2 text-xs text-base-400">
                 Çalıştırma Modu bilgisi: Kuyruk modunda sonuç arka planda takip edilir (polling).
@@ -359,7 +474,7 @@ export default function KanalKontrolBotu() {
             </div>
 
             <div className="mt-6 flex justify-between">
-              <button className="btn-outline" onClick={() => setStep(4)}>
+              <button className="btn-outline" onClick={() => setStep(5)}>
                 Geri
               </button>
               <button className="btn" onClick={onStart}>
@@ -374,7 +489,14 @@ export default function KanalKontrolBotu() {
 }
 
 /* ---------- small UI ---------- */
-const STEP_LABELS = ["Senaryo Seçimi", "Ortam & Kanal", "Application Bilgileri", "Kart/Test Verisi", "Özet & Çalıştır"] as const;
+const STEP_LABELS = [
+  "Senaryo Seçimi",
+  "Ortam & Kanal",
+  "Application Bilgileri",
+  "Kart/Test Verisi",
+  "Ödeme Bilgileri",
+  "Özet & Çalıştır",
+] as const;
 
 const SCENARIOS: Record<ScenarioKey, { label: string; tip: string }> = {
   token: { label: "Token Alma", tip: "Kart için token üretilir (ödeme yapılmaz)." },
@@ -392,7 +514,9 @@ function StepBar({ step, labels }: { step: number; labels: readonly string[] }) 
         return (
           <span
             key={l}
-            className={`pill ${active ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30" : "bg-base-900 text-base-400 ring-base-800"}`}
+            className={`pill ${
+              active ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30" : "bg-base-900 text-base-400 ring-base-800"
+            }`}
           >
             {`${i + 1}. ${l}`}
           </span>
@@ -402,11 +526,23 @@ function StepBar({ step, labels }: { step: number; labels: readonly string[] }) 
   );
 }
 
-function Field(props: { label: string; value: string; onChange: (v: string) => void; type?: "text" | "number"; placeholder?: string }) {
+function Field(props: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: "text" | "number";
+  placeholder?: string;
+}) {
   return (
     <label className="block">
       <div className="mb-1 text-sm">{props.label}</div>
-      <input className="input" value={props.value} onChange={(e) => props.onChange(e.target.value)} type={props.type ?? "text"} placeholder={props.placeholder} />
+      <input
+        className="input"
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+        type={props.type ?? "text"}
+        placeholder={props.placeholder}
+      />
     </label>
   );
 }
