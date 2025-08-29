@@ -107,6 +107,7 @@ export default function Wizard({
     threeDOperation: false,
     userId: "",
     userName: "",
+    paymentType: "CREDITCARD",
     options: {
       includeMsisdnInOrderID: false,
       checkCBBLForMsisdn: true,
