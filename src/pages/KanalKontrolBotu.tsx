@@ -6,7 +6,7 @@ import CodeBlock from "@/components/CodeBlock";
 import { useProgress } from "@/hooks/useProgress";
 import { startPayment, type StartPayload } from "@/lib/n8nClient";
 import StepPayment, { normalizeMsisdn, type PaymentState } from "@/components/wizard/StepPayment";
-import { loadRuns, saveRun, type SavedRun } from "@/lib/runsStore";
+import { saveRun, type SavedRun } from "@/lib/runsStore";
 
 /* ---------- helpers ---------- */
 function randDigits(n: number) {
@@ -31,30 +31,6 @@ type AppState = {
   transactionDateTime: string;
 };
 
-/* ---------- highlight extractor (rapor için) ---------- */
-type Highlight = {
-  TOKEN?: string | null;
-  HASHDATA?: string | null;
-  SESSIONID?: string | null;
-  PAYMENTID?: string | null;
-  ORDERID?: string | null;
-};
-function extractHighlights(steps: Array<{ request?: any; response?: any; name: string }>): Highlight {
-  const h: Highlight = {};
-  for (const s of steps) {
-    const req = (s.request ?? {}) as any;
-    const res = (s.response ?? {}) as any;
-    if (h.TOKEN == null) h.TOKEN = res.cardToken ?? req.token ?? null;
-    if (h.HASHDATA == null) h.HASHDATA = req.hashData ?? null;
-    if (h.SESSIONID == null) h.SESSIONID = req.threeDSessionID ?? res.threeDSessionID ?? null;
-    if (h.PAYMENTID == null) h.PAYMENTID = res.paymentId ?? req.paymentId ?? null;
-    if (h.ORDERID == null) h.ORDERID = res.orderId ?? req.orderId ?? null;
-    if (h.TOKEN && h.PAYMENTID && h.ORDERID) break;
-  }
-  return h;
-}
-
-/* =================================================================== */
 export default function KanalKontrolBotu() {
   // Wizard modal
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -64,7 +40,7 @@ export default function KanalKontrolBotu() {
   const [scenarios, setScenarios] = useState<ScenarioKey[]>(["payment"]);
 
   // Step 2 — ortam & kanal
-  const [env, setEnv] = useState<"STB" | "PRP">("STB"); // PRD -> PRP
+  const [env, setEnv] = useState<"STB" | "PRP">("STB");
   const [channelId, setChannelId] = useState("999134");
 
   // Step 3 — application (DEFAULT BOŞ — preset ile doldurulacak)
@@ -112,7 +88,6 @@ export default function KanalKontrolBotu() {
   const steps = prog?.steps ?? [];
   const lastStep = steps[steps.length - 1];
   const running = prog?.status === "running";
-  const highlights = extractHighlights(steps);
 
   /* ---------- yalnızca HTTP içeren step'ler (rapor için) ---------- */
   const httpSteps = useMemo(
@@ -124,7 +99,7 @@ export default function KanalKontrolBotu() {
   const payload = useMemo<StartPayload>(
     () => ({
       env: env === "STB" ? "stb" : "prp",
-      channelId,
+      channelId,               // 👈 tekrar eklendi
       segment: "X",
       application: { ...app },
       userId: payment.userId,
@@ -201,7 +176,7 @@ export default function KanalKontrolBotu() {
       {/* Progress Panel */}
       {runKey && (
         <>
-          {/* Adımlar */}
+          {/* Adımlar (sadece step başlıkları/mesajları) */}
           <div className="card p-6">
             <div className="flex items-center justify-between">
               <div className="text-sm text-base-400">
@@ -237,7 +212,7 @@ export default function KanalKontrolBotu() {
             </div>
           </div>
 
-          {/* Rapor (sadece HTTP request içerenler) */}
+          {/* Rapor — SADECE HTTP istek/yanıtlar */}
           <div className="card p-6">
             <div className="mb-2 font-medium">Rapor</div>
 
@@ -247,22 +222,6 @@ export default function KanalKontrolBotu() {
               </div>
             )}
 
-            {/* Ana highlight'lar */}
-            <div className="mb-3 flex flex-wrap gap-2">
-              {Object.entries(highlights).map(([k, v]) => (
-                <span
-                  key={k}
-                  className={`rounded-full border px-3 py-1 text-xs ${
-                    v ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10" : "border-base-700 text-base-400"
-                  }`}
-                  title={v || ""}
-                >
-                  {k}: {v ? (String(v).length > 22 ? String(v).slice(0, 8) + "…" + String(v).slice(-8) : v) : "—"}
-                </span>
-              ))}
-            </div>
-
-            {/* HTTP kategorileri: step name'e göre grupla, sadece request/response olanları göster */}
             <div className="space-y-3">
               {groupByName(httpSteps).map(([name, arr]) => {
                 const last = arr[arr.length - 1];
@@ -423,12 +382,12 @@ export default function KanalKontrolBotu() {
           </section>
         )}
 
-        {/* Step 3 — Application Bilgileri (default boş, preset opsiyonel) */}
+        {/* Step 3 — Application Bilgileri */}
         {step === 3 && (
           <section className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-base-400">Hazır Application:</span>
-              <button
+               <button
                 className="chip"
                 onClick={() =>
                   setApp({
@@ -470,7 +429,10 @@ export default function KanalKontrolBotu() {
               >
                 Temizle
               </button>
+              
             </div>
+
+            
 
             <div className="grid gap-3 md:grid-cols-2">
               <Field label="applicationName" value={app.applicationName} onChange={(v) => setApp((a) => ({ ...a, applicationName: v }))} />

@@ -1,3 +1,4 @@
+// src/components/wizard/Wizard.tsx
 import { useMemo, useState, type ReactNode } from "react";
 import StepCards from "./StepCards";
 import StepSummary from "./StepSummary";
@@ -31,7 +32,7 @@ const StepTitles = [
   "Ortam & Kanal",
   "Application Bilgileri",
   "Kart/Test Verisi",
-  "Ödeme Bilgileri",     // <— YENİ ADIM
+  "Ödeme Bilgileri",
   "Özet & Çalıştır",
 ] as const;
 
@@ -139,10 +140,10 @@ export default function Wizard({
 
   const canNext = useMemo(() => {
     if (step === 0) return !!scenario;
-    if (step === 1) return !!env && !!channelId;
+    if (step === 1) return !!env && !!channelId; // 👈 kanal id zorunlu
     if (step === 2) return !!applicationName && !!applicationPassword && !!secureCode && !!transactionId && !!transactionDateTime;
     if (step === 3) return manualValid;
-    if (step === 4) return paymentValid; // ödeme adımı
+    if (step === 4) return paymentValid;
     return true;
   }, [
     step,
@@ -159,7 +160,7 @@ export default function Wizard({
   ]);
 
   /* -------------------------------------------------------
-     Payload
+     Preview table + payload
   ------------------------------------------------------- */
   const tableData = useMemo(() => {
     if (manualMode && manualCards.length) {
@@ -171,7 +172,6 @@ export default function Wizard({
         mode: "MANUAL" as const,
       }));
     }
-    // AUTO önizleme
     return [
       { id: 101, bank: "134", pan: "•••• 5520", exp: "08/27", mode: "AUTO" as const },
       { id: 102, bank: "046", pan: "•••• 7742", exp: "03/28", mode: "AUTO" as const },
@@ -181,9 +181,18 @@ export default function Wizard({
 
   const buildPayload = () => {
     const payload: any = {
-      step: scenario === "token" ? "token" : scenario === "payment" ? "payment" : scenario === "cancel" ? "cancel" : scenario === "refund" ? "refund" : "payment",
+      step:
+        scenario === "token"
+          ? "token"
+          : scenario === "payment"
+          ? "payment"
+          : scenario === "cancel"
+          ? "cancel"
+          : scenario === "refund"
+          ? "refund"
+          : "payment",
       env,
-      channelId,
+      channelId, // 👈 tekrar eklendi
       queue: queueMode,
       runKey: makeRunKey(),
       application: {
@@ -195,16 +204,12 @@ export default function Wizard({
       },
       cardSelectionMode: manualMode ? "manual" : "automatic",
       cardCount: manualMode ? manualCards.length : 10,
-
-      // ÖDEME
       payment: {
         userId: payment.userId,
         userName: payment.userName,
         threeDOperation: payment.threeDOperation,
         installmentNumber: payment.installmentNumber,
-        products: [
-          { amount: payment.amount, msisdn: normalizeMsisdn(payment.msisdn) },
-        ],
+        products: [{ amount: payment.amount, msisdn: normalizeMsisdn(payment.msisdn) }],
         paymentType: "CREDITCARD",
         options: { ...payment.options },
       },
@@ -234,10 +239,7 @@ export default function Wizard({
             <div className="text-xs uppercase tracking-wide text-neutral-400">Kanal Kontrol Botu</div>
             <div className="text-lg font-semibold">Wizard — {StepTitles[step]}</div>
           </div>
-          <button
-            className="rounded-lg px-3 py-1 text-sm text-neutral-300 hover:bg-neutral-800"
-            onClick={onClose}
-          >
+          <button className="rounded-lg px-3 py-1 text-sm text-neutral-300 hover:bg-neutral-800" onClick={onClose}>
             Kapat
           </button>
         </div>
@@ -248,9 +250,7 @@ export default function Wizard({
             <div
               key={t}
               className={`rounded-xl px-3 py-2 text-center text-xs ring-1 ${
-                i === step
-                  ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30"
-                  : "bg-neutral-900 text-neutral-400 ring-neutral-800"
+                i === step ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30" : "bg-neutral-900 text-neutral-400 ring-neutral-800"
               }`}
             >
               {i + 1}. {t}
@@ -275,19 +275,11 @@ export default function Wizard({
                   <label
                     key={key}
                     className={`flex cursor-pointer items-center justify-between rounded-xl border p-3 ${
-                      scenario === (key as Scenario)
-                        ? "border-emerald-500/50 bg-emerald-500/10"
-                        : "border-neutral-800 bg-neutral-900 hover:border-neutral-700"
+                      scenario === (key as Scenario) ? "border-emerald-500/50 bg-emerald-500/10" : "border-neutral-800 bg-neutral-900 hover:border-neutral-700"
                     }`}
                   >
                     <span className="text-sm">{label}</span>
-                    <input
-                      type="radio"
-                      name="scenario"
-                      value={key}
-                      checked={scenario === (key as Scenario)}
-                      onChange={() => setScenario(key as Scenario)}
-                    />
+                    <input type="radio" name="scenario" value={key} checked={scenario === (key as Scenario)} onChange={() => setScenario(key as Scenario)} />
                   </label>
                 ))}
               </div>
@@ -298,15 +290,9 @@ export default function Wizard({
           {step === 1 && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="Ortam">
-                <select
-                  value={env}
-                  onChange={(e) => setEnv(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-neutral-800 bg-neutral-900 p-2 text-sm"
-                >
+                <select value={env} onChange={(e) => setEnv(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-800 bg-neutral-900 p-2 text-sm">
                   <option value="STB">STB</option>
-                  <option value="PRP" disabled>
-                    PRP (yakında)
-                  </option>
+                  <option value="PRP" disabled>PRP (yakında)</option>
                 </select>
               </Field>
               <Clearable label="Channel ID" value={channelId} onChange={setChannelId} />
@@ -318,68 +304,20 @@ export default function Wizard({
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs text-neutral-400">Hazır Application:</span>
-                <Chip active={activePreset === "PAYCELLTEST"} onClick={() => applyPreset("PAYCELLTEST")}>
-                  PAYCELLTEST
-                </Chip>
-                <Chip active={activePreset === "SENSAT"} onClick={() => applyPreset("SENSAT")}>
-                  SENSAT
-                </Chip>
-                <button
-                  type="button"
-                  onClick={clearPreset}
-                  className="ml-2 rounded-full border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
-                >
+                <Chip active={activePreset === "PAYCELLTEST"} onClick={() => applyPreset("PAYCELLTEST")}>PAYCELLTEST</Chip>
+                <Chip active={activePreset === "SENSAT"} onClick={() => applyPreset("SENSAT")}>SENSAT</Chip>
+                <button type="button" onClick={clearPreset} className="ml-2 rounded-full border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-800">
                   Temizle
                 </button>
               </div>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Clearable
-                  label="applicationName"
-                  value={applicationName}
-                  onChange={(v) => {
-                    setActivePreset(null);
-                    setApplicationName(v);
-                  }}
-                  placeholder="örn. SENSAT"
-                />
-                <Clearable
-                  label="applicationPassword"
-                  value={applicationPassword}
-                  onChange={(v) => {
-                    setActivePreset(null);
-                    setApplicationPassword(v);
-                  }}
-                  placeholder="örn. H0287…"
-                />
-                <Clearable
-                  label="secureCode"
-                  value={secureCode}
-                  onChange={(v) => {
-                    setActivePreset(null);
-                    setSecureCode(v);
-                  }}
-                  placeholder="örn. H0287…"
-                />
-                <Clearable
-                  label="transactionId"
-                  value={transactionId}
-                  onChange={(v) => {
-                    setActivePreset(null);
-                    setTransactionId(v);
-                  }}
-                  placeholder="örn. 0081…"
-                />
+                <Clearable label="applicationName" value={applicationName} onChange={(v) => { setActivePreset(null); setApplicationName(v); }} placeholder="örn. SENSAT" />
+                <Clearable label="applicationPassword" value={applicationPassword} onChange={(v) => { setActivePreset(null); setApplicationPassword(v); }} placeholder="örn. H0287…" />
+                <Clearable label="secureCode" value={secureCode} onChange={(v) => { setActivePreset(null); setSecureCode(v); }} placeholder="örn. H0287…" />
+                <Clearable label="transactionId" value={transactionId} onChange={(v) => { setActivePreset(null); setTransactionId(v); }} placeholder="örn. 0081…" />
                 <div className="sm:col-span-2">
-                  <Clearable
-                    label="transactionDateTime"
-                    value={transactionDateTime}
-                    onChange={(v) => {
-                      setActivePreset(null);
-                      setTransactionDateTime(v);
-                    }}
-                    placeholder="örn. 20210812142051000"
-                  />
+                  <Clearable label="transactionDateTime" value={transactionDateTime} onChange={(v) => { setActivePreset(null); setTransactionDateTime(v); }} placeholder="örn. 20210812142051000" />
                 </div>
               </div>
             </div>
@@ -407,7 +345,7 @@ export default function Wizard({
               fields={{
                 Senaryo: scenario,
                 Ortam: env,
-                "Channel ID": channelId,
+                // Channel ID özet ekranda gösterilmeyecek (istenmedi)
                 applicationName,
                 transactionId,
                 transactionDateTime,
@@ -416,8 +354,7 @@ export default function Wizard({
                 Tutar: String(payment.amount),
                 Taksit: String(payment.installmentNumber),
                 "3D": payment.threeDOperation ? "Açık" : "Kapalı",
-                MSISDN:
-                  normalizeMsisdn(payment.msisdn).replace(/^(\d{3})(\d{3})(\d{2})(\d{2})$/, "5** *** ** **") || "-",
+                MSISDN: normalizeMsisdn(payment.msisdn).replace(/^(\d{3})(\d{3})(\d{2})(\d{2})$/, "5** *** ** **") || "-",
                 User: `${payment.userId} • ${payment.userName}`,
               }}
               flags={{
@@ -433,28 +370,19 @@ export default function Wizard({
 
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-neutral-800 p-4">
-          <button
-            className="rounded-xl px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
-            onClick={() => setStep((s) => Math.max(0, s - 1))}
-            disabled={step === 0}
-          >
+          <button className="rounded-xl px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-50" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}>
             Geri
           </button>
           {step < StepTitles.length - 1 ? (
             <button
-              className={`rounded-xl px-4 py-2 text-sm font-semibold ${
-                canNext ? "bg-emerald-600 text-white hover:bg-emerald-500" : "bg-neutral-800 text-neutral-500"
-              }`}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold ${canNext ? "bg-emerald-600 text-white hover:bg-emerald-500" : "bg-neutral-800 text-neutral-500"}`}
               disabled={!canNext}
               onClick={() => canNext && setStep((s) => s + 1)}
             >
               İleri
             </button>
           ) : (
-            <button
-              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
-              onClick={() => onRun(buildPayload(), queueMode)}
-            >
+            <button className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500" onClick={() => onRun(buildPayload(), queueMode)}>
               Botu Çalıştır
             </button>
           )}
@@ -496,14 +424,8 @@ function Clearable({
         placeholder={placeholder}
         className="mt-1 w-full rounded-xl border border-neutral-800 bg-neutral-900 p-2 pr-9 text-sm"
       />
-      {value && (
-        <button
-          type="button"
-          onClick={() => onChange("")}
-          className="absolute right-2 top-[26px] grid h-6 w-6 place-items-center rounded-md text-neutral-400 hover:bg-neutral-800"
-          aria-label={`${label} temizle`}
-          title="Temizle"
-        >
+      {!!value && (
+        <button type="button" className="absolute right-2 top-[26px] grid h-6 w-6 place-items-center rounded-md text-neutral-400 hover:bg-neutral-800" onClick={() => onChange("")}>
           ×
         </button>
       )}
@@ -516,9 +438,7 @@ function Chip({ active, onClick, children }: { active?: boolean; onClick?: () =>
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full px-3 py-1 text-xs border ${
-        active ? "border-emerald-500 bg-emerald-500/15 text-emerald-300" : "border-neutral-700 text-neutral-300 hover:bg-neutral-800"
-      }`}
+      className={`rounded-full px-3 py-1 text-xs border ${active ? "border-emerald-500 bg-emerald-500/15 text-emerald-300" : "border-neutral-700 text-neutral-300 hover:bg-neutral-800"}`}
     >
       {children}
     </button>
