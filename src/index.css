@@ -2,30 +2,36 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  body { @apply bg-neutral-950 text-neutral-100 antialiased; }
+/* Koyu tema ve tipografi */
+:root {
+  color-scheme: dark;
 }
-
-/* radio & checkbox primary (yeşil) olsun */
-input[type="radio"],
-input[type="checkbox"] { accent-color: var(--primary); }
-
+html, body, #root {
+  height: 100%;
+}
+body {
+  @apply bg-base-950 text-base-100 antialiased;
+}
 
 @layer components {
-  .card { @apply rounded-2xl border border-neutral-800 bg-neutral-900/60 shadow-sm; }
-
-  /* bg-primary yerine doğrudan theme() */
-  .btn  {
-    @apply inline-flex items-center gap-2 rounded-2xl px-4 py-2 font-medium text-white hover:opacity-90 transition;
-    background-color: theme('colors.primary.DEFAULT');
+  .card {
+    @apply rounded-2xl border border-base-800 bg-base-900/60;
   }
-
-  .btn-secondary { @apply inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm border border-neutral-700 text-neutral-200 hover:bg-neutral-800; }
-  .input { @apply w-full rounded-xl border border-neutral-800 bg-neutral-900 p-2 text-sm; }
-  .step-pill { @apply rounded-xl px-3 py-2 text-center text-xs ring-1; }
-  .pill { @apply rounded-full border px-3 py-1 text-xs; }
-}
-
-@layer base {
-  body { @apply text-neutral-100; }
+  .btn {
+    @apply inline-flex items-center gap-2 rounded-2xl px-4 py-2 font-medium
+           bg-primary text-primary-fg hover:opacity-90 transition;
+  }
+  .btn-outline {
+    @apply inline-flex items-center gap-2 rounded-2xl px-4 py-2 font-medium
+           border border-base-700 text-base-200 hover:bg-base-900 transition;
+  }
+  .chip {
+    @apply rounded-full px-3 py-1 text-xs border border-base-700 text-base-200 hover:bg-base-900;
+  }
+  .input {
+    @apply w-full rounded-xl border border-base-800 bg-base-900 px-3 py-2 text-sm;
+  }
+  .pill {
+    @apply rounded-xl px-3 py-2 text-center text-xs ring-1;
+  }
 }
