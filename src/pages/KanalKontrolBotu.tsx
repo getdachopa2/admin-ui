@@ -79,7 +79,6 @@ export default function KanalKontrolBotu() {
     userId: "",
     userName: "",
     threeDOperation: false,
-    threeDSessionID: "",
     installmentNumber: 0,
     amount: 10,
     msisdn: "5303589836",
@@ -120,7 +119,6 @@ export default function KanalKontrolBotu() {
         paymentType: payment.paymentType.toLowerCase() as "creditcard" | "debitcard" | "prepaidcard",
         threeDOperation: payment.threeDOperation,
         installmentNumber: payment.installmentNumber,
-        ...(payment.threeDOperation && payment.threeDSessionID ? { threeDSessionID: payment.threeDSessionID } : {}),
         options: { ...payment.options },
       },
 
@@ -235,6 +233,18 @@ export default function KanalKontrolBotu() {
           </div>
         </div>
       )}
+
+      {prog && prog.status !== 'running' && (
+  <div className="card p-6 mt-4">
+    <div className="mb-2 font-medium">Rapor</div>
+    {prog.result ? (
+      <CodeBlock value={prog.result} lang="json" />
+    ) : (
+      <div className="text-sm text-base-500">Rapor verisi gelmedi.</div>
+    )}
+  </div>
+)}
+
 
       {/* Wizard */}
       <Modal open={wizardOpen} onClose={() => setWizardOpen(false)} title={`Wizard — ${STEP_LABELS[step - 1]}`}>
