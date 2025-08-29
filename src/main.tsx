@@ -1,11 +1,16 @@
-// src/main.tsx
-import React from 'react';
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom'
+import './index.css'
+import Shell from '@/shell/Shell'
+import Dashboard from '@/pages/Dashboard'
+import KanalKontrolBotu from '@/pages/KanalKontrolBotu'
 import ReactDOM from 'react-dom/client';
-import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
+import React from 'react';
 
-import Shell from '@/shell/Shell';
-import Dashboard from '@/pages/Dashboard';
-import KanalKontrolBotu from '@/pages/KanalKontrolBotu';
+
+
+
 
 const router = createBrowserRouter([
   {
