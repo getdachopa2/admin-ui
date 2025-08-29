@@ -1,38 +1,83 @@
 // src/lib/n8nClient.ts
-export type RunData = {
-  status: 'running' | 'completed' | 'error';
-  startTime?: string;
-  endTime?: string|null;
-  steps: Array<{
-    time: string;
-    name: string;
-    status: 'running'|'success'|'error';
-    message: string;
-    request?: any;
-    response?: any;
-  }>;
-  result?: any;
-};
+/* ---------- Paths / ENV ---------- */
+const BASE = String(import.meta.env.VITE_N8N_BASE_URL || 'http://localhost:5701').replace(/\/$/, '');
+const P_START    = String(import.meta.env.VITE_N8N_PAYMENT_START    || '/webhook/payment-test/start');
+const P_PROGRESS = String(import.meta.env.VITE_N8N_PAYMENT_PROGRESS || '/webhook/payment-test/progress');
+const P_EVENTS   = String(import.meta.env.VITE_N8N_EVENTS           || '/webhook/payment-test/events');
+const BASIC_RAW  = String(import.meta.env.VITE_N8N_BASIC || ''); // "user:pass"
 
-const BASE      = import.meta.env.VITE_N8N_BASE_URL ?? 'http://localhost:5701';
-const P_START   = import.meta.env.VITE_N8N_PAYMENT_START ?? '/webhook/payment-test/start';
-const P_PROGRESS= import.meta.env.VITE_N8N_PAYMENT_PROGRESS ?? '/webhook/payment-test/progress';
-const P_PREVIEW = import.meta.env.VITE_N8N_CARD_PREVIEW ?? '/webhook/payment-test/card-preview';
+/* ---------- Headers ---------- */
+function buildHeaders(extra?: HeadersInit): HeadersInit {
+  const auth = BASIC_RAW ? { Authorization: 'Basic ' + btoa(BASIC_RAW) } : {};
+  return {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    ...auth,
+    ...(extra || {}),
+  };
+}
 
+/* ---------- Low-level fetch helpers ---------- */
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+    credentials: 'omit',
+    headers: buildHeaders(init?.headers),
     ...init,
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    let msg = '';
+    try { msg = await res.text(); } catch {}
+    throw new Error(`HTTP ${res.status} ${res.statusText} @ ${path}\n${msg}`);
+  }
   return res.json() as Promise<T>;
 }
 
+async function getJSON<T>(path: string, query?: Record<string, any>, signal?: AbortSignal): Promise<T> {
+  const url = new URL(`${BASE}${path}`);
+  if (query) {
+    Object.entries(query).forEach(([k, v]) => {
+      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+    });
+  }
+  const res = await fetch(url.toString(), { method: 'GET', headers: buildHeaders(), signal, credentials: 'omit' });
+  if (!res.ok) {
+    let msg = '';
+    try { msg = await res.text(); } catch {}
+    throw new Error(`HTTP ${res.status} ${res.statusText} @ GET ${path}\n${msg}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+/* ---------- Types ---------- */
+export type StepStatus = 'running' | 'success' | 'error';
+
+export type RunStep = {
+  time: string;
+  name: string;
+  status: StepStatus;
+  message?: string;
+  request?: unknown;
+  response?: unknown;
+};
+
+export type RunData = {
+  status: 'running' | 'completed' | 'error';
+  startTime?: string;
+  endTime?: string | null;
+  steps: RunStep[];
+  result?: any;
+};
+
+/** UI -> n8n start payload */
 export type StartPayload = {
-  scenario?: 'token'|'payment'|'cancel'|'refund'|'full-suite';
-  env?: string;          // STB vb. (n8n tarafında segment/ortam olarak kullanılabilir)
+  // environment + channel
+  env?: 'stb' | 'prp';
   channelId?: string;
 
+  // optional segment (biz X kullanıyoruz)
+  segment?: string;
+
+  // application
   application: {
     applicationName: string;
     applicationPassword: string;
@@ -41,9 +86,13 @@ export type StartPayload = {
     transactionDateTime: string;
   };
 
+  // user (header'da kullanılıyor)
+  userId?: string;
+  userName?: string;
+
+  // payment toggles
   payment: {
-    amount: number;
-    msisdn: string;
+    paymentType?: 'creditcard' | 'debitcard' | 'prepaidcard';
     threeDOperation: boolean;
     installmentNumber: number;
     options: {
@@ -52,8 +101,14 @@ export type StartPayload = {
       checkCBBLForCard: boolean;
       checkFraudStatus: boolean;
     };
+    /** 3D seçiliyse opsiyonel */
+    threeDSessionID?: string;
   };
 
+  // ürün satırı (n8n Prepare Payment Data buradan okuyor)
+  products: Array<{ amount: number | string; msisdn: string }>;
+
+  // kart seçimi
   cardSelectionMode: 'automatic' | 'manual';
   manualCards?: Array<{
     ccno: string;
@@ -63,22 +118,41 @@ export type StartPayload = {
     bank_code?: string;
   }>;
   cardCount?: number;
-  runKey?: string;
+
+  // ileride gerekirse
+  runMode?: 'payment-only' | 'all';
 };
 
-export async function startPayment(body: StartPayload) {
-  return req<{ runKey: string }>(P_START, { method: 'POST', body: JSON.stringify(body) });
+export type N8nStartResponse = { runKey: string };
+
+/* -------- long-poll /events types -------- */
+export type N8nEventItem = {
+  seq: number;
+  time: string;
+  name: string;
+  status: 'running' | 'success' | 'error' | string;
+  message?: string;
+  request?: any;
+  response?: any;
+};
+
+export type N8nEventsResponse = {
+  runKey: string;
+  status: 'running' | 'completed' | 'error';
+  nextCursor: number;
+  events: N8nEventItem[];
+  endTime?: string | null;
+};
+
+/* ---------- API ---------- */
+export async function startPayment(body: StartPayload, signal?: AbortSignal) {
+  return req<N8nStartResponse>(P_START, { method: 'POST', body: JSON.stringify(body), signal });
 }
 
 export async function getProgress(runKey: string) {
-  const q = encodeURIComponent(runKey);
-  return req<RunData>(`${P_PROGRESS}?runKey=${q}`);
+  return getJSON<RunData>(P_PROGRESS, { runKey });
 }
 
-
-
-export async function getCardPreview(params: { mode: 'automatic'|'manual'; manualCards?: any[] }) {
-  const res = await fetch('/api/card-preview', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(params) });
-  if (!res.ok) throw new Error('preview failed');
-  return await res.json(); // [{id, bank, pan, exp, mode}]
+export async function longPollEvents(runKey: string, cursor = 0, waitSec = 25, signal?: AbortSignal) {
+  return getJSON<N8nEventsResponse>(P_EVENTS, { runKey, cursor, waitSec }, signal);
 }

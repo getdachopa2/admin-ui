@@ -17,7 +17,7 @@ export default function Modal({
       <div className="w-full max-w-5xl overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900 shadow-2xl">
         <div className="flex items-center justify-between border-b border-neutral-800 p-4">
           <div className="text-lg font-semibold">{title}</div>
-          <button className="btn-secondary" onClick={onClose}>Kapat</button>
+          <button className="btn-outline" onClick={onClose}>Kapat</button>
         </div>
         <div className="p-5">{children}</div>
       </div>

@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+// src/pages/KanalKontrolBotu.tsx
+import React, { useMemo, useState } from "react";
 import Modal from "@/components/Modal";
 import { IndeterminateBar, SolidProgress } from "@/components/ProgressBar";
 import CodeBlock from "@/components/CodeBlock";
@@ -48,7 +49,7 @@ export default function KanalKontrolBotu() {
   const [scenarios, setScenarios] = useState<ScenarioKey[]>(["payment"]);
 
   // Step 2 — ortam & kanal
-  const [env, setEnv] = useState<"STB" | "PRD">("STB");
+  const [env, setEnv] = useState<"STB" | "PRP">("STB"); // PRD -> PRP
   const [channelId, setChannelId] = useState("999134");
 
   // Step 3 — application
@@ -98,27 +99,43 @@ export default function KanalKontrolBotu() {
   const lastStep = steps[steps.length - 1];
   const running = prog?.status === "running";
 
-  // n8n payload (payment adımıyla senkron)
+  /* ---------- PAYLOAD (StartPayload ile birebir hizalı) ---------- */
   const payload = useMemo<StartPayload>(
     () => ({
+      // n8n "01. Normalize Env" bekliyor: stb/prp
+      env: env === "STB" ? "stb" : "prp",
+      channelId,
+      // segment'i sabit "X" kullanıyoruz (n8n Prepare Payment Data ile uyumlu)
+      segment: "X",
+
+      // Application blok
       application: { ...app },
+
+      // User bilgileri ROOT seviyede (n8n header için)
+      userId: payment.userId,
+      userName: payment.userName,
+
+      // Payment toggles
       payment: {
-        amount: payment.amount,
-        msisdn: normalizeMsisdn(payment.msisdn),
+        paymentType: payment.paymentType.toLowerCase() as "creditcard" | "debitcard" | "prepaidcard",
         threeDOperation: payment.threeDOperation,
         installmentNumber: payment.installmentNumber,
-        paymentType: payment.paymentType,
-        ...(payment.threeDOperation ? { threeDSessionID: payment.threeDSessionID } : {}),
-        userId: payment.userId,
-        userName: payment.userName,
+        ...(payment.threeDOperation && payment.threeDSessionID ? { threeDSessionID: payment.threeDSessionID } : {}),
         options: { ...payment.options },
-      } as any, // n8nClient tarafındaki tip kısıtına takılmamak için
+      },
+
+      // Ürün satırı (n8n Prepare Payment Data buradan okuyor)
+      products: [{ amount: payment.amount, msisdn: normalizeMsisdn(payment.msisdn) }],
+
+      // Kart seçimi
       cardSelectionMode: mode,
       manualCards: mode === "manual" ? manualCards : undefined,
-      channelId,
-      segment: env,
+      cardCount: mode === "manual" ? manualCards.length : cardCount,
+
+      // Akış modu (bilgi amaçlı)
+      runMode: "payment-only",
     }),
-    [app, payment, mode, manualCards, channelId, env],
+    [env, channelId, app, payment, mode, manualCards, cardCount],
   );
 
   async function onStart() {
@@ -204,8 +221,7 @@ export default function KanalKontrolBotu() {
                     <CodeBlock
                       value={typeof lastStep.response === "string" ? lastStep.response : lastStep.response ?? {}}
                       lang={
-                        typeof lastStep.response === "string" &&
-                        (lastStep.response as string).trim().startsWith("<")
+                        typeof lastStep.response === "string" && (lastStep.response as string).trim().startsWith("<")
                           ? "xml"
                           : "json"
                       }
@@ -267,7 +283,7 @@ export default function KanalKontrolBotu() {
                 <div className="mb-1 text-sm">Ortam</div>
                 <select className="input" value={env} onChange={(e) => setEnv(e.target.value as any)}>
                   <option value="STB">STB</option>
-                  <option value="PRD">PRD</option>
+                  <option value="PRP">PRP</option>
                 </select>
               </label>
 
@@ -417,9 +433,7 @@ export default function KanalKontrolBotu() {
                       </div>
                     </div>
                   ))}
-                  {manualCards.length === 0 && (
-                    <div className="text-sm text-base-400">Henüz kart eklenmedi.</div>
-                  )}
+                  {manualCards.length === 0 && <div className="text-sm text-base-400">Henüz kart eklenmedi.</div>}
                 </div>
               </>
             )}

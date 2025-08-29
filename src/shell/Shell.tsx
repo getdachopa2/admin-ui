@@ -14,7 +14,7 @@ export default function Shell() {
           {/* Artık burada CTA yok; sadece nav */}
           <nav className="flex items-center gap-2 text-sm">
             <NavItem to="/">Dashboard</NavItem>
-            <NavItem to="/kanal-kontrol">Kanal Kontrol Botu</NavItem>
+            <NavItem to="/kanal-kontrol-botu">Kanal Kontrol Botu</NavItem>
           </nav>
         </div>
       </header>
