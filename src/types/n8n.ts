@@ -26,7 +26,7 @@ export type RunStep = {
 
 export type RunData = {
   status: "running" | "completed" | "error";
-  startTime: string;
+  startTime?: string;
   endTime?: string | null;
   steps: RunStep[];
   result?: any;
