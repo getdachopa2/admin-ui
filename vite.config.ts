@@ -5,11 +5,9 @@ import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// vite.config.ts
 export default defineConfig({
   plugins: [react()],
-  resolve: {
-    alias: {
-      '@': resolve(__dirname, 'src'),
-    },
-  },
+  server: { proxy: { '/webhook': { target: 'http://localhost:5701', changeOrigin: true } } },
+  resolve:{ alias:{ '@': resolve(__dirname,'src') } }
 });

@@ -6,7 +6,7 @@ import CodeBlock from "@/components/CodeBlock";
 import { useProgress } from "@/hooks/useProgress";
 import { startPayment, type StartPayload } from "@/lib/n8nClient";
 import StepPayment, { normalizeMsisdn, type PaymentState } from "@/components/wizard/StepPayment";
-import { loadRuns, saveRun, type SavedRun } from "@/lib/runsStore";
+import { saveRun, type SavedRun } from "@/lib/runsStore";
 
 /* ---------- helpers ---------- */
 function randDigits(n: number) {
@@ -172,10 +172,10 @@ export default function KanalKontrolBotu() {
   const [scenarios, setScenarios] = useState<ScenarioKey[]>(["payment"]);
 
   // Step 2 — ortam & kanal
-  const [env, setEnv] = useState<"STB" | "PRP">("STB"); // PRD -> PRP
+  const [env, setEnv] = useState<"STB" | "PRP">("STB");
   const [channelId, setChannelId] = useState("999134");
 
-  // Step 3 — application (DEFAULT BOŞ — preset ile doldurulacak)
+  // Step 3 — application
   const [app, setApp] = useState<AppState>({
     applicationName: "",
     applicationPassword: "",
@@ -216,7 +216,7 @@ export default function KanalKontrolBotu() {
 
   // Çalıştırma / progress
   const [runKey, setRunKey] = useState<string | null>(null);
-const { data: prog, error: progErr } = useProgress(runKey, 25, 2000);
+  const { data: prog, error: progErr } = useProgress(runKey, 25, 2000);
   const steps = prog?.steps ?? [];
   const running = prog?.status === "running";
   const highlights = extractHighlights(steps);
@@ -238,6 +238,8 @@ const { data: prog, error: progErr } = useProgress(runKey, 25, 2000);
   }, [runKey, env]);
 
   const liveSteps = useMemo(() => [...echoSteps, ...steps], [echoSteps, steps]);
+  // ✅ Adımlar listesi koşarken de aksın
+  const listSteps = useMemo(() => (running ? liveSteps : steps), [running, liveSteps, steps]);
 
   /* ---------- yalnızca HTTP içeren step'ler (rapor için) ---------- */
   const httpSteps = useMemo(
@@ -348,36 +350,34 @@ const { data: prog, error: progErr } = useProgress(runKey, 25, 2000);
             </div>
             {progErr && <div className="mt-2 text-sm text-red-400">Hata: {progErr}</div>}
 
-            {/* Koşarken sadece Canlı Ticker */}
+            {/* Koşarken ticker */}
             {running && <LiveTicker steps={liveSteps} />}
 
-            {/* Tamamlanınca sadece Adımlar listesi */}
-            {!running && (
-              <div className="mt-4">
-                <div className="mb-2 font-medium">Adımlar</div>
-                <ul className="max-h-80 space-y-2 overflow-auto">
-                  {steps.map((s, i) => (
-                    <li key={i} className="text-sm">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`inline-block h-2 w-2 rounded-full ${
-                            s.status === "success"
-                              ? "bg-emerald-500"
-                              : s.status === "error"
-                              ? "bg-red-500"
-                              : "bg-amber-500"
-                          }`}
-                        />
-                        <span className="font-medium">{s.name}</span>
-                        {s.message && <span className="text-base-400">— {s.message}</span>}
-                      </div>
-                      <div className="ml-4 text-xs text-base-500">{new Date(s.time).toLocaleString()}</div>
-                    </li>
-                  ))}
-                  {!steps.length && <li className="text-sm text-base-500">Henüz step oluşmadı…</li>}
-                </ul>
-              </div>
-            )}
+            {/* Adımlar — her zaman göster */}
+            <div className="mt-4">
+              <div className="mb-2 font-medium">Adımlar</div>
+              <ul className="max-h-80 space-y-2 overflow-auto">
+                {listSteps.map((s, i) => (
+                  <li key={`${s.time}-${i}`} className="text-sm">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`inline-block h-2 w-2 rounded-full ${
+                          s.status === "success"
+                            ? "bg-emerald-500"
+                            : s.status === "error"
+                            ? "bg-red-500"
+                            : "bg-amber-500"
+                        }`}
+                      />
+                      <span className="font-medium">{s.name}</span>
+                      {s.message && <span className="text-base-400">— {s.message}</span>}
+                    </div>
+                    <div className="ml-4 text-xs text-base-500">{new Date(s.time).toLocaleString()}</div>
+                  </li>
+                ))}
+                {!listSteps.length && <li className="text-sm text-base-500">Henüz step oluşmadı…</li>}
+              </ul>
+            </div>
           </div>
 
           {/* Rapor (accordion) */}
