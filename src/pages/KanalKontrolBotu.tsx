@@ -1,5 +1,5 @@
 // src/pages/KanalKontrolBotu.tsx
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Modal from "@/components/Modal";
 import { IndeterminateBar, SolidProgress } from "@/components/ProgressBar";
 import CodeBlock from "@/components/CodeBlock";
@@ -44,11 +44,11 @@ function extractHighlights(steps: Array<{ request?: any; response?: any; name: s
   for (const s of steps) {
     const req = (s.request ?? {}) as any;
     const res = (s.response ?? {}) as any;
-    //if (h.TOKEN == null) h.TOKEN = res.cardToken ?? res.token ?? req.token ?? null;
-    //if (h.HASHDATA == null) h.HASHDATA = req.hashData ?? req.HASHDATA ?? null;
-    //if (h.SESSIONID == null) h.SESSIONID = req.threeDSessionID ?? res.threeDSessionID ?? null;
-    //if (h.PAYMENTID == null) h.PAYMENTID = res.paymentId ?? req.paymentId ?? null;
-    //if (h.ORDERID == null) h.ORDERID = res.orderId ?? req.orderId ?? null;
+    // if (h.TOKEN == null) h.TOKEN = res.cardToken ?? res.token ?? req.token ?? null;
+    // if (h.HASHDATA == null) h.HASHDATA = req.hashData ?? req.HASHDATA ?? null;
+    // if (h.SESSIONID == null) h.SESSIONID = req.threeDSessionID ?? res.threeDSessionID ?? null;
+    // if (h.PAYMENTID == null) h.PAYMENTID = res.paymentId ?? req.paymentId ?? null;
+    // if (h.ORDERID == null) h.ORDERID = res.orderId ?? req.orderId ?? null;
     if (h.TOKEN && h.PAYMENTID && h.ORDERID) break;
   }
   return h;
@@ -221,6 +221,24 @@ export default function KanalKontrolBotu() {
   const running = prog?.status === "running";
   const highlights = extractHighlights(steps);
 
+  // Ticker: sunucudan event gelmeden hemen görünsün diye ilk yerel step
+  const [echoSteps, setEchoSteps] = useState<
+    Array<{ time: string; name: string; status: string; message?: string }>
+  >([]);
+  useEffect(() => {
+    if (!runKey) return;
+    setEchoSteps([
+      {
+        time: new Date().toISOString(),
+        name: "Akış başlatıldı",
+        status: "running",
+        message: `Simülasyon isteği alındı. Ortam: ${env}.`,
+      },
+    ]);
+  }, [runKey, env]);
+
+  const liveSteps = useMemo(() => [...echoSteps, ...steps], [echoSteps, steps]);
+
   /* ---------- yalnızca HTTP içeren step'ler (rapor için) ---------- */
   const httpSteps = useMemo(
     () => steps.filter((s) => s && (s.request != null || s.response != null)),
@@ -321,7 +339,6 @@ export default function KanalKontrolBotu() {
       {/* Progress Panel */}
       {runKey && (
         <>
-          {/* Adımlar */}
           <div className="card p-6">
             <div className="flex items-center justify-between">
               <div className="text-sm text-base-400">
@@ -331,32 +348,36 @@ export default function KanalKontrolBotu() {
             </div>
             {progErr && <div className="mt-2 text-sm text-red-400">Hata: {progErr}</div>}
 
+            {/* Koşarken sadece Canlı Ticker */}
+            {running && <LiveTicker steps={liveSteps} />}
 
-           <LiveTicker steps={steps} />
-            <div className="mt-4">
-              <div className="mb-2 font-medium">Adımlar</div>
-              <ul className="max-h-80 space-y-2 overflow-auto">
-                {steps.map((s, i) => (
-                  <li key={i} className="text-sm">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`inline-block h-2 w-2 rounded-full ${
-                          s.status === "success"
-                            ? "bg-emerald-500"
-                            : s.status === "error"
-                            ? "bg-red-500"
-                            : "bg-amber-500"
-                        }`}
-                      />
-                      <span className="font-medium">{s.name}</span>
-                      {s.message && <span className="text-base-400">— {s.message}</span>}
-                    </div>
-                    <div className="ml-4 text-xs text-base-500">{new Date(s.time).toLocaleString()}</div>
-                  </li>
-                ))}
-                {!steps.length && <li className="text-sm text-base-500">Henüz step oluşmadı…</li>}
-              </ul>
-            </div>
+            {/* Tamamlanınca sadece Adımlar listesi */}
+            {!running && (
+              <div className="mt-4">
+                <div className="mb-2 font-medium">Adımlar</div>
+                <ul className="max-h-80 space-y-2 overflow-auto">
+                  {steps.map((s, i) => (
+                    <li key={i} className="text-sm">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`inline-block h-2 w-2 rounded-full ${
+                            s.status === "success"
+                              ? "bg-emerald-500"
+                              : s.status === "error"
+                              ? "bg-red-500"
+                              : "bg-amber-500"
+                          }`}
+                        />
+                        <span className="font-medium">{s.name}</span>
+                        {s.message && <span className="text-base-400">— {s.message}</span>}
+                      </div>
+                      <div className="ml-4 text-xs text-base-500">{new Date(s.time).toLocaleString()}</div>
+                    </li>
+                  ))}
+                  {!steps.length && <li className="text-sm text-base-500">Henüz step oluşmadı…</li>}
+                </ul>
+              </div>
+            )}
           </div>
 
           {/* Rapor (accordion) */}
@@ -374,10 +395,10 @@ export default function KanalKontrolBotu() {
               {Object.entries(highlights).map(([k, v]) => (
                 <span
                   key={k}
-                    className={`rounded-full border px-3 py-1 text-xs break-all whitespace-pre-wrap ${
-    v ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10" : "border-base-700 text-base-400"
-  }`}
-  title={v || ""}
+                  className={`rounded-full border px-3 py-1 text-xs break-all whitespace-pre-wrap ${
+                    v ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10" : "border-base-700 text-base-400"
+                  }`}
+                  title={v || ""}
                 >
                   {k}: {v ? (String(v).length > 22 ? String(v).slice(0, 8) + "…" + String(v).slice(-8) : v) : "—"}
                 </span>
@@ -395,9 +416,7 @@ export default function KanalKontrolBotu() {
                     <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2">
                       <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />
                       <div className="font-medium">{label}</div>
-                      <span className="ml-2 rounded bg-base-800 px-2 py-0.5 text-xs text-base-400">
-                        {items.length}
-                      </span>
+                      <span className="ml-2 rounded bg-base-800 px-2 py-0.5 text-xs text-base-400">{items.length}</span>
                     </summary>
 
                     {/* İçerik: Bu senaryodaki tüm http istekleri */}
@@ -423,7 +442,6 @@ export default function KanalKontrolBotu() {
                             <div className="mb-2">
                               <div className="mb-1 flex items-center gap-2 text-[11px] text-base-500">
                                 <span>REQUEST</span>
-                                {/* inline highlight chips */}
                                 {chipsForStep(s, "request").map((c) => (
                                   <ChipInline key={c.label + c.value} label={c.label} value={c.value ?? undefined} />
                                 ))}
@@ -464,8 +482,6 @@ export default function KanalKontrolBotu() {
               )}
             </div>
           </div>
-
-          {/* “Son İstek / Yanıt” bölümü kaldırıldı */}
         </>
       )}
 
@@ -715,7 +731,7 @@ export default function KanalKontrolBotu() {
 }
 
 function LiveTicker({ steps }: { steps: Array<{ time: string; name: string; status: string; message?: string }> }) {
-  const last = steps.slice(-5).reverse();
+  const last = steps.slice(-6).reverse();
   if (!last.length) return null;
   return (
     <div className="mt-3 rounded-xl border border-base-800 bg-base-900 p-3">
@@ -723,9 +739,11 @@ function LiveTicker({ steps }: { steps: Array<{ time: string; name: string; stat
       <ul className="space-y-1 text-sm">
         {last.map((s, i) => (
           <li key={i} className="flex items-center gap-2">
-            <span className={`h-2 w-2 rounded-full inline-block ${
-              s.status === 'success' ? 'bg-emerald-500' : s.status === 'error' ? 'bg-red-500' : 'bg-amber-500'
-            }`} />
+            <span
+              className={`h-2 w-2 rounded-full inline-block ${
+                s.status === "success" ? "bg-emerald-500" : s.status === "error" ? "bg-red-500" : "bg-amber-500"
+              }`}
+            />
             <span className="font-medium">{s.name}</span>
             {s.message && <span className="text-base-400">— {s.message}</span>}
             <span className="ml-auto text-xs text-base-500">{new Date(s.time).toLocaleTimeString()}</span>
@@ -735,7 +753,6 @@ function LiveTicker({ steps }: { steps: Array<{ time: string; name: string; stat
     </div>
   );
 }
-
 
 /* ---------- small UI ---------- */
 const STEP_LABELS = [
