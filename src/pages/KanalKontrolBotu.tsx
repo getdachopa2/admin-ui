@@ -7,6 +7,7 @@ import { useProgress } from "@/hooks/useProgress";
 import { startPayment, type StartPayload } from "@/lib/n8nClient";
 import StepPayment, { normalizeMsisdn, type PaymentState } from "@/components/wizard/StepPayment";
 import { saveRun, type SavedRun } from "@/lib/runsStore";
+import CandidateFinder from "@/components/CandidateFinder";
 
 /* ---------- helpers ---------- */
 function randDigits(n: number) {
@@ -44,11 +45,6 @@ function extractHighlights(steps: Array<{ request?: any; response?: any; name: s
   for (const s of steps) {
     const req = (s.request ?? {}) as any;
     const res = (s.response ?? {}) as any;
-    // if (h.TOKEN == null) h.TOKEN = res.cardToken ?? res.token ?? req.token ?? null;
-    // if (h.HASHDATA == null) h.HASHDATA = req.hashData ?? req.HASHDATA ?? null;
-    // if (h.SESSIONID == null) h.SESSIONID = req.threeDSessionID ?? res.threeDSessionID ?? null;
-    // if (h.PAYMENTID == null) h.PAYMENTID = res.paymentId ?? req.paymentId ?? null;
-    // if (h.ORDERID == null) h.ORDERID = res.orderId ?? req.orderId ?? null;
     if (h.TOKEN && h.PAYMENTID && h.ORDERID) break;
   }
   return h;
@@ -162,14 +158,31 @@ function ChipInline({ label, value }: { label: string; value?: string | null }) 
   );
 }
 
+// NEW: paymentId çekmek için helper
+function getPaymentIdFromStep(s: any): string | null {
+  const res = s?.response;
+  if (!res) return null;
+  if (typeof res === "string") {
+    const m = res.match(/<\s*(PAYMENT_ID|PAYMENTID)\s*>\s*([^<]+)\s*<\s*\/\s*(PAYMENT_ID|PAYMENTID)\s*>/i);
+    return m?.[2] || null;
+  }
+  return deepPick(res, ["paymentId", "PAYMENT_ID", "PAYMENTID"]);
+}
+
 /* =================================================================== */
 export default function KanalKontrolBotu() {
+  const SAVE_LOCAL = import.meta.env.VITE_SAVE_LOCAL_RUNS === "true"; // default: false
+
   // Wizard modal
   const [wizardOpen, setWizardOpen] = useState(false);
   const [step, setStep] = useState(1 as 1 | 2 | 3 | 4 | 5 | 6);
 
   // Step 1 — senaryo
   const [scenarios, setScenarios] = useState<ScenarioKey[]>(["payment"]);
+  const selectedAction = useMemo<"payment" | "cancel" | "refund">(
+    () => (scenarios.includes("cancel") ? "cancel" : scenarios.includes("refund") ? "refund" : "payment"),
+    [scenarios],
+  );
 
   // Step 2 — ortam & kanal
   const [env, setEnv] = useState<"STB" | "PRP">("STB");
@@ -196,6 +209,9 @@ export default function KanalKontrolBotu() {
   const updCard = (i: number, k: keyof (typeof manualCards)[number], v: string) =>
     setManualCards((cs) => cs.map((c, idx) => (idx === i ? { ...c, [k]: v } : c)));
   const delCard = (i: number) => setManualCards((cs) => cs.filter((_, idx) => idx !== i));
+
+  // Candidate (cancel/refund)
+  const [pickedCandidate, setPickedCandidate] = useState<{ paymentId: string } | null>(null);
 
   // Step 5 — ödeme bilgileri
   const [payment, setPayment] = useState<PaymentState>({
@@ -238,7 +254,6 @@ export default function KanalKontrolBotu() {
   }, [runKey, env]);
 
   const liveSteps = useMemo(() => [...echoSteps, ...steps], [echoSteps, steps]);
-  // ✅ Adımlar listesi koşarken de aksın
   const listSteps = useMemo(() => (running ? liveSteps : steps), [running, liveSteps, steps]);
 
   /* ---------- yalnızca HTTP içeren step'ler (rapor için) ---------- */
@@ -256,24 +271,38 @@ export default function KanalKontrolBotu() {
       application: { ...app },
       userId: payment.userId,
       userName: payment.userName,
+
+      // 3D şimdilik kapalı sabit
       payment: {
         paymentType: payment.paymentType.toLowerCase() as "creditcard" | "debitcard" | "prepaidcard",
-        threeDOperation: payment.threeDOperation,
+        threeDOperation: false,
         installmentNumber: payment.installmentNumber,
         options: { ...payment.options },
       },
+
       products: [{ amount: payment.amount, msisdn: normalizeMsisdn(payment.msisdn) }],
+
+      // payment'ta kart seçimi
       cardSelectionMode: mode,
       manualCards: mode === "manual" ? manualCards : undefined,
       cardCount: mode === "manual" ? manualCards.length : cardCount,
-      runMode: "payment-only",
+
+      // aksiyon bilgisi
+      ...(selectedAction !== "payment" && pickedCandidate?.paymentId
+        ? { action: selectedAction, paymentRef: { paymentId: pickedCandidate.paymentId }, runMode: "all" as const }
+        : { action: "payment" as const, runMode: "payment-only" as const }),
     }),
-    [env, channelId, app, payment, mode, manualCards, cardCount],
+    [env, channelId, app, payment, mode, manualCards, cardCount, selectedAction, pickedCandidate],
   );
 
   async function onStart() {
-    if (!(scenarios.includes("payment") || scenarios.includes("all"))) {
-      alert("Şimdilik yalnızca Ödeme senaryosu tetiklenebiliyor.");
+    if (!(scenarios.includes("payment") || scenarios.includes("all") || scenarios.includes("cancel") || scenarios.includes("refund"))) {
+      alert("En az bir senaryo seçin.");
+      return;
+    }
+    // cancel/refund seçiliyse ve candidate yoksa uyar
+    if (selectedAction !== "payment" && !pickedCandidate?.paymentId) {
+      alert(`${selectedAction.toUpperCase()} için önce bir paymentId seçin (Aday Bul).`);
       return;
     }
     try {
@@ -285,8 +314,9 @@ export default function KanalKontrolBotu() {
     }
   }
 
-  // Koşu tamamlanınca son 5'e kaydet
+  // Koşu tamamlanınca son 5'e kaydet — flag ile
   React.useEffect(() => {
+    if (!SAVE_LOCAL) return;
     if (!runKey || !prog || (prog.status !== "completed" && prog.status !== "error")) return;
     const toSave: SavedRun = {
       runKey,
@@ -315,6 +345,10 @@ export default function KanalKontrolBotu() {
     }
     return Array.from(map.entries()); // [label, steps[]]
   }, [httpSteps]);
+
+  // İptal tetikle modal state:
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [cancelPaymentId, setCancelPaymentId] = useState<string | null>(null);
 
   return (
     <div className="space-y-6">
@@ -390,20 +424,7 @@ export default function KanalKontrolBotu() {
               </div>
             )}
 
-            {/* Global highlight özet */}
-            <div className="mb-3 flex flex-wrap gap-2">
-              {Object.entries(highlights).map(([k, v]) => (
-                <span
-                  key={k}
-                  className={`rounded-full border px-3 py-1 text-xs break-all whitespace-pre-wrap ${
-                    v ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10" : "border-base-700 text-base-400"
-                  }`}
-                  title={v || ""}
-                >
-                  {k}: {v ? (String(v).length > 22 ? String(v).slice(0, 8) + "…" + String(v).slice(-8) : v) : "—"}
-                </span>
-              ))}
-            </div>
+            {/* Global highlight'lar üst bar YOK — yalnızca blok içi chip'lerde */}
 
             {/* ANA ACCORDION: Senaryo başlıkları */}
             <div className="space-y-3">
@@ -457,6 +478,24 @@ export default function KanalKontrolBotu() {
                                 {chipsForStep(s, "response").map((c) => (
                                   <ChipInline key={c.label + c.value} label={c.label} value={c.value ?? undefined} />
                                 ))}
+
+                                {/* NEW: ödeme response'larında iptal tetikle */}
+                                {scenarioOfStepName(s.name) === "payment" &&
+                                  (() => {
+                                    const pid = getPaymentIdFromStep(s);
+                                    return pid ? (
+                                      <button
+                                        className="ml-auto btn-outline"
+                                        onClick={() => {
+                                          setCancelPaymentId(pid);
+                                          setCancelModalOpen(true);
+                                        }}
+                                        title="Bu ödeme için iptal akışını başlat"
+                                      >
+                                        İptal tetikle
+                                      </button>
+                                    ) : null;
+                                  })()}
                               </div>
                               <CodeBlock
                                 value={typeof s.response === "string" ? s.response : s.response ?? {}}
@@ -618,64 +657,94 @@ export default function KanalKontrolBotu() {
           </section>
         )}
 
-        {/* Step 4 — Kart/Test Verisi */}
-        {step === 4 && (
-          <section className="space-y-4">
-            <div className="grid items-end gap-3 md:grid-cols-3">
-              <Field label="Kart Adedi" type="number" value={String(cardCount)} onChange={(v) => setCardCount(Number(v) || 0)} />
-              <label className="flex items-center gap-2">
-                <input type="radio" checked={mode === "automatic"} onChange={() => setMode("automatic")} />
-                <span>Automatic (DB'den random aktif 10 kart)</span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input type="radio" checked={mode === "manual"} onChange={() => setMode("manual")} />
-                <span>Manual (kartları siz ekleyin)</span>
-              </label>
-            </div>
+        {/* Step 4 — Kart/Test Verisi veya Aday Bul */}
+        {step === 4 &&
+          (selectedAction === "payment" ? (
+            <section className="space-y-4">
+              <div className="grid items-end gap-3 md:grid-cols-3">
+                <Field label="Kart Adedi" type="number" value={String(cardCount)} onChange={(v) => setCardCount(Number(v) || 0)} />
+                <label className="flex items-center gap-2">
+                  <input type="radio" checked={mode === "automatic"} onChange={() => setMode("automatic")} />
+                  <span>Automatic (DB'den random 10)</span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="radio" checked={mode === "manual"} onChange={() => setMode("manual")} />
+                  <span>Manual (kartları siz ekleyin)</span>
+                </label>
+              </div>
 
-            {mode === "manual" && (
-              <>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <Field label="Banka Kodu (ops.)" value={bankCode} onChange={setBankCode} placeholder="e.g. 62" />
-                </div>
+              {mode === "manual" && (
+                <>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <Field label="Banka Kodu (ops.)" value={bankCode} onChange={setBankCode} placeholder="e.g. 62" />
+                  </div>
 
-                <div className="mt-2 flex items-center justify-between">
-                  <div className="font-medium">Kartlar</div>
-                  <button className="btn-outline" onClick={addCard}>
-                    Kart Ekle
-                  </button>
-                </div>
+                  <div className="mt-2 flex items-center justify-between">
+                    <div className="font-medium">Kartlar</div>
+                    <button className="btn-outline" onClick={addCard}>
+                      Kart Ekle
+                    </button>
+                  </div>
 
-                <div className="max-h-72 space-y-3 overflow-auto">
-                  {manualCards.map((c, idx) => (
-                    <div key={idx} className="grid items-end gap-2 md:grid-cols-5">
-                      <Field label="CC No" value={c.ccno} onChange={(v) => updCard(idx, "ccno", v)} />
-                      <Field label="Ay" value={c.e_month} onChange={(v) => updCard(idx, "e_month", v)} />
-                      <Field label="Yıl" value={c.e_year} onChange={(v) => updCard(idx, "e_year", v)} />
-                      <Field label="CVV" value={c.cvv} onChange={(v) => updCard(idx, "cvv", v)} />
-                      <div className="flex items-end gap-2">
-                        <Field label="Banka" value={c.bank_code || ""} onChange={(v) => updCard(idx, "bank_code", v)} />
-                        <button className="h-10 rounded-xl border border-base-700 px-3 text-sm hover:bg-base-900" onClick={() => delCard(idx)}>
-                          Sil
-                        </button>
+                  <div className="max-h-72 space-y-3 overflow-auto">
+                    {manualCards.map((c, idx) => (
+                      <div key={idx} className="grid items-end gap-2 md:grid-cols-5">
+                        <Field label="CC No" value={c.ccno} onChange={(v) => updCard(idx, "ccno", v)} />
+                        <Field label="Ay" value={c.e_month} onChange={(v) => updCard(idx, "e_month", v)} />
+                        <Field label="Yıl" value={c.e_year} onChange={(v) => updCard(idx, "e_year", v)} />
+                        <Field label="CVV" value={c.cvv} onChange={(v) => updCard(idx, "cvv", v)} />
+                        <div className="flex items-end gap-2">
+                          <Field label="Banka" value={c.bank_code || ""} onChange={(v) => updCard(idx, "bank_code", v)} />
+                          <button className="h-10 rounded-xl border border-base-700 px-3 text-sm hover:bg-base-900" onClick={() => delCard(idx)}>
+                            Sil
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                  {manualCards.length === 0 && <div className="text-sm text-base-400">Henüz kart eklenmedi.</div>}
-                </div>
-              </>
-            )}
+                    ))}
+                    {manualCards.length === 0 && <div className="text-sm text-base-400">Henüz kart eklenmedi.</div>}
+                  </div>
+                </>
+              )}
 
-            <div className="mt-6 flex justify-between">
-              <button className="btn-outline" onClick={() => setStep(3)}>
-                Geri
-              </button>
-              <button className="btn" onClick={() => setStep(5)}>
-                İleri
-              </button>
-            </div>
-          </section>
-        )}
+              <div className="mt-6 flex justify-between">
+                <button className="btn-outline" onClick={() => setStep(3)}>
+                  Geri
+                </button>
+                <button className="btn" onClick={() => setStep(5)}>
+                  İleri
+                </button>
+              </div>
+            </section>
+          ) : (
+            <section className="space-y-4">
+              <div className="text-sm text-base-300">
+                {selectedAction === "cancel" ? "Cancel" : "Refund"} için uygun işlemler listelenir. Satır seçince paymentId formu dolacak.
+              </div>
+
+              <CandidateFinder
+                action={selectedAction}
+                channelId={channelId}
+                onPick={(r) => setPickedCandidate({ paymentId: r.paymentId })}
+              />
+
+              {pickedCandidate?.paymentId ? (
+                <div className="rounded-xl border border-emerald-700/40 bg-emerald-700/10 p-3 text-sm text-emerald-300">
+                  Seçilen paymentId: <span className="font-mono">{pickedCandidate.paymentId}</span>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-base-800 bg-base-900 p-3 text-sm text-base-400">Henüz bir satır seçilmedi.</div>
+              )}
+
+              <div className="mt-6 flex justify-between">
+                <button className="btn-outline" onClick={() => setStep(3)}>
+                  Geri
+                </button>
+                <button className="btn" onClick={() => setStep(5)}>
+                  İleri
+                </button>
+              </div>
+            </section>
+          ))}
 
         {/* Step 5 — Ödeme Bilgileri */}
         {step === 5 && (
@@ -706,9 +775,12 @@ export default function KanalKontrolBotu() {
                 <Summary label="KART ADEDİ" value={String(mode === "manual" ? manualCards.length : cardCount)} />
                 <Summary label="MSISDN" value={normalizeMsisdn(payment.msisdn)} />
                 <Summary label="TUTAR" value={String(payment.amount)} />
-                <Summary label="3D" value={String(payment.threeDOperation)} />
+                <Summary label="3D" value={"false"} />
                 <Summary label="TAKSİT" value={String(payment.installmentNumber)} />
                 <Summary label="USER" value={`${payment.userName} (${payment.userId || "-"})`} />
+                {selectedAction !== "payment" && (
+                  <Summary label="PAYMENT REF" value={pickedCandidate?.paymentId || "-"} />
+                )}
               </div>
               <div className="mt-3 rounded border border-base-800 px-3 py-2 text-xs text-base-400">
                 Çalıştırma Modu bilgisi: Kuyruk modunda sonuç arka planda takip edilir (long-poll).
@@ -725,6 +797,19 @@ export default function KanalKontrolBotu() {
             </div>
           </section>
         )}
+      </Modal>
+
+      {/* NEW: İptal tetikleme modalı (şimdilik sadece UI/loader) */}
+      <Modal open={cancelModalOpen} onClose={() => setCancelModalOpen(false)} title="İptal tetikleniyor…">
+        <div className="flex items-center gap-3">
+          <span className="inline-block h-5 w-5 rounded-full border-2 border-base-700 border-t-primary animate-spin" />
+          <div className="text-sm">
+            Hazırlanıyor — n8n bağlantısı eklenecek.
+            <div className="mt-1 text-xs text-base-400">
+              paymentId: <span className="font-mono">{cancelPaymentId}</span>
+            </div>
+          </div>
+        </div>
       </Modal>
     </div>
   );

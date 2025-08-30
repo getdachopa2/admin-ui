@@ -1,17 +1,14 @@
 // src/lib/n8nClient.ts
 /* ---------- Paths / ENV ---------- */
 const BASE = String(import.meta.env.VITE_N8N_BASE_URL || 'http://localhost:5701').replace(/\/$/, '');
-const P_START    = String(import.meta.env.VITE_N8N_PAYMENT_START    || '/webhook/payment-test/start');
-const P_PROGRESS = String(import.meta.env.VITE_N8N_PAYMENT_PROGRESS || '/webhook/payment-test/progress');
-const P_EVENTS   = String(import.meta.env.VITE_N8N_EVENTS           || '/webhook/payment-test/events');
-const BASIC_RAW  = String(import.meta.env.VITE_N8N_BASIC || ''); // "user:pass"
-const P_TEST_CARDS = String(import.meta.env.VITE_N8N_TEST_CARDS     || '/webhook/query/get-cards');
+const P_START       = String(import.meta.env.VITE_N8N_PAYMENT_START    || '/webhook/payment-test/start');
+const P_PROGRESS    = String(import.meta.env.VITE_N8N_PAYMENT_PROGRESS || '/webhook/payment-test/progress');
+const P_EVENTS      = String(import.meta.env.VITE_N8N_EVENTS           || '/webhook/payment-test/events');
+const P_TEST_CARDS  = String(import.meta.env.VITE_N8N_TEST_CARDS       || '/webhook/query/get-cards');
+const P_CANDIDATES  = String(import.meta.env.VITE_N8N_CANDIDATES       || '/webhook/payment-test/candidates'); // NEW
+const BASIC_RAW     = String(import.meta.env.VITE_N8N_BASIC || ''); // "user:pass"
+
 import type { RunData, RunStep } from '@/types/n8n';
-
-
-
-
-
 
 /* ---------- Headers ---------- */
 function buildHeaders(extra?: HeadersInit): HeadersInit {
@@ -39,6 +36,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Boş/JSON olmayan gövdeyi tolere eden güvenli GET JSON */
 async function getJSON<T>(path: string, query?: Record<string, any>, signal?: AbortSignal): Promise<T> {
   const url = new URL(`${BASE}${path}`);
   if (query) {
@@ -47,17 +45,35 @@ async function getJSON<T>(path: string, query?: Record<string, any>, signal?: Ab
     });
   }
   const res = await fetch(url.toString(), { method: 'GET', headers: buildHeaders(), signal, credentials: 'omit' });
+
   if (!res.ok) {
     let msg = '';
     try { msg = await res.text(); } catch {}
     throw new Error(`HTTP ${res.status} ${res.statusText} @ GET ${path}\n${msg}`);
   }
-  return res.json() as Promise<T>;
+
+  // 204/205 veya boş gövde: "yeni event yok" gibi düşün
+  const hasBody = res.status !== 204 && res.status !== 205;
+  const text = hasBody ? await res.text().catch(() => '') : '';
+
+  if (!text) {
+    return {} as T;
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    // JSON değilse hata yerine boş döndür (events için daha iyi UX)
+    return {} as T;
+  }
 }
 
+/* ---------- UI -> n8n start payload ---------- */
+export type StartAction = 'payment' | 'cancel' | 'refund' | 'token';
 
-/** UI -> n8n start payload */
 export type StartPayload = {
+  action?: StartAction; // NEW
+
   // environment + channel
   env?: 'stb' | 'prp';
   channelId?: string;
@@ -74,7 +90,7 @@ export type StartPayload = {
     transactionDateTime: string;
   };
 
-  // user (header'da kullanılıyor)
+  // user (header)
   userId?: string;
   userName?: string;
 
@@ -89,11 +105,14 @@ export type StartPayload = {
       checkCBBLForCard: boolean;
       checkFraudStatus: boolean;
     };
-    /** 3D seçiliyse opsiyonel */
     threeDSessionID?: string;
   };
 
-  // ürün satırı (n8n Prepare Payment Data buradan okuyor)
+  // cancel/refund referansı
+  paymentRef?: { paymentId: string };   // NEW
+  refund?: { amount?: number | string }; // NEW
+
+  // ürün satırı
   products: Array<{ amount: number | string; msisdn: string }>;
 
   // kart seçimi
@@ -107,7 +126,6 @@ export type StartPayload = {
   }>;
   cardCount?: number;
 
-  // ileride gerekirse
   runMode?: 'payment-only' | 'all';
 };
 
@@ -141,15 +159,23 @@ export async function getProgress(runKey: string) {
   return getJSON<RunData>(P_PROGRESS, { runKey });
 }
 
+/** Boş JSON dönerse de tolere edilir */
 export async function longPollEvents(runKey: string, cursor = 0, waitSec = 25, signal?: AbortSignal) {
-  return getJSON<N8nEventsResponse>(P_EVENTS, { runKey, cursor, waitSec }, signal);
+  const res = await getJSON<Partial<N8nEventsResponse>>(P_EVENTS, { runKey, cursor, waitSec }, signal);
+  // Güvenli normalizasyon
+  return {
+    runKey,
+    status: (res?.status as any) || 'running',
+    nextCursor: typeof res?.nextCursor === 'number' ? res!.nextCursor : cursor,
+    events: Array.isArray(res?.events) ? (res!.events as N8nEventItem[]) : [],
+    endTime: res?.endTime ?? null,
+  } as N8nEventsResponse;
 }
 
-
-
+/* ---------- Test Card ---------- */
 export type TestCardRow = {
   bank_code: string;
-  ccno: string;          // backend maskesiz dönerse UI'da maskeleyebiliriz
+  ccno: string;
   e_month: string;
   e_year: string;
   status: 0 | 1;
@@ -162,4 +188,28 @@ export async function listTestCards(signal?: AbortSignal) {
        : Array.isArray(out?.items) ? out.items
        : Array.isArray(out?.data)  ? out.data
        : [];
+}
+
+/* ---------- Candidates (cancel/refund) ---------- */
+export type CandidateRow = {
+  paymentId: string;
+  orderId: string;
+  amount: number | string;
+  app: string;
+  channelId: string;
+  issuerBankCode: string;
+  resultCode: string | number;
+  createdAt: string;
+  success: boolean | string; // n8n bazen string döndürebilir
+};
+
+export async function listCandidates(
+  params: { action: 'cancel' | 'refund'; channelId: string; from?: string; to?: string; limit?: number },
+  signal?: AbortSignal,
+) {
+  return getJSON<CandidateRow[]>(
+    P_CANDIDATES,
+    { action: params.action, channelId: params.channelId, from: params.from, to: params.to, limit: params.limit },
+    signal,
+  );
 }
