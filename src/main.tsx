@@ -6,7 +6,8 @@ import './index.css';
 import Shell from '@/shell/Shell';
 import Dashboard from '@/pages/Dashboard';
 import KanalKontrolBotu from '@/pages/KanalKontrolBotu';
-import PaymentSim from '@/pages/PaymentSim'; // 👈 EKLE
+import PaymentSim from '@/pages/PaymentSim';
+import KartDurumRaporu from '@/pages/KartDurumRaporu';
 
 
 const router = createBrowserRouter([
@@ -16,7 +17,8 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Dashboard /> },
       { path: 'kanal-kontrol-botu', element: <KanalKontrolBotu /> },
-       { path: 'payment-sim', element: <PaymentSim /> }, // 👈 EKLE
+      // { path: 'payment-sim', element: <PaymentSim /> }, 
+        { path: 'kart-durum-raporu', element: <KartDurumRaporu /> },
       { path: 'kanal-kontrol', element: <Navigate to="/kanal-kontrol-botu" replace /> },
       { path: '*', element: <Navigate to="/" replace /> },
     ],

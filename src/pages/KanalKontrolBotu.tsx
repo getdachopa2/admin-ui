@@ -331,6 +331,8 @@ export default function KanalKontrolBotu() {
             </div>
             {progErr && <div className="mt-2 text-sm text-red-400">Hata: {progErr}</div>}
 
+
+           <LiveTicker steps={steps} />
             <div className="mt-4">
               <div className="mb-2 font-medium">Adımlar</div>
               <ul className="max-h-80 space-y-2 overflow-auto">
@@ -711,6 +713,29 @@ export default function KanalKontrolBotu() {
     </div>
   );
 }
+
+function LiveTicker({ steps }: { steps: Array<{ time: string; name: string; status: string; message?: string }> }) {
+  const last = steps.slice(-5).reverse();
+  if (!last.length) return null;
+  return (
+    <div className="mt-3 rounded-xl border border-base-800 bg-base-900 p-3">
+      <div className="mb-2 text-xs text-base-500">Canlı Ticker</div>
+      <ul className="space-y-1 text-sm">
+        {last.map((s, i) => (
+          <li key={i} className="flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full inline-block ${
+              s.status === 'success' ? 'bg-emerald-500' : s.status === 'error' ? 'bg-red-500' : 'bg-amber-500'
+            }`} />
+            <span className="font-medium">{s.name}</span>
+            {s.message && <span className="text-base-400">— {s.message}</span>}
+            <span className="ml-auto text-xs text-base-500">{new Date(s.time).toLocaleTimeString()}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 
 /* ---------- small UI ---------- */
 const STEP_LABELS = [

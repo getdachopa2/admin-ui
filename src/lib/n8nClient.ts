@@ -5,6 +5,13 @@ const P_START    = String(import.meta.env.VITE_N8N_PAYMENT_START    || '/webhook
 const P_PROGRESS = String(import.meta.env.VITE_N8N_PAYMENT_PROGRESS || '/webhook/payment-test/progress');
 const P_EVENTS   = String(import.meta.env.VITE_N8N_EVENTS           || '/webhook/payment-test/events');
 const BASIC_RAW  = String(import.meta.env.VITE_N8N_BASIC || ''); // "user:pass"
+const P_TEST_CARDS = String(import.meta.env.VITE_N8N_TEST_CARDS     || '/webhook/query/get-cards');
+import type { RunData, RunStep } from '@/types/n8n';
+
+
+
+
+
 
 /* ---------- Headers ---------- */
 function buildHeaders(extra?: HeadersInit): HeadersInit {
@@ -48,25 +55,6 @@ async function getJSON<T>(path: string, query?: Record<string, any>, signal?: Ab
   return res.json() as Promise<T>;
 }
 
-/* ---------- Types ---------- */
-export type StepStatus = 'running' | 'success' | 'error';
-
-export type RunStep = {
-  time: string;
-  name: string;
-  status: StepStatus;
-  message?: string;
-  request?: unknown;
-  response?: unknown;
-};
-
-export type RunData = {
-  status: 'running' | 'completed' | 'error';
-  startTime?: string;
-  endTime?: string | null;
-  steps: RunStep[];
-  result?: any;
-};
 
 /** UI -> n8n start payload */
 export type StartPayload = {
@@ -155,4 +143,23 @@ export async function getProgress(runKey: string) {
 
 export async function longPollEvents(runKey: string, cursor = 0, waitSec = 25, signal?: AbortSignal) {
   return getJSON<N8nEventsResponse>(P_EVENTS, { runKey, cursor, waitSec }, signal);
+}
+
+
+
+export type TestCardRow = {
+  bank_code: string;
+  ccno: string;          // backend maskesiz dönerse UI'da maskeleyebiliriz
+  e_month: string;
+  e_year: string;
+  status: 0 | 1;
+  id?: number;
+};
+
+export async function listTestCards(signal?: AbortSignal) {
+  const out = await getJSON<any>(P_TEST_CARDS, undefined, signal);
+  return Array.isArray(out) ? out
+       : Array.isArray(out?.items) ? out.items
+       : Array.isArray(out?.data)  ? out.data
+       : [];
 }
