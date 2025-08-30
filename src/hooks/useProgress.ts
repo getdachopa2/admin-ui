@@ -13,12 +13,19 @@ const looksTerminal = (steps: RunStep[]) => {
   return /final|rapor|report|tamamlan|payment.*success|ödeme.*başar/i.test(txt);
 };
 
-export function useProgress(runKey: string | null, waitSec = 25) {
+/**
+ * waitSec: sunucuya uzun-poll timeout (saniye)
+ * minGapMs: İKİ çağrı arası minimum bekleme (ms) – istemci tarafı throttle
+ */
+export function useProgress(runKey: string | null, waitSec = 25, minGapMs = 2000) {
   const [data, setData] = useState<RunData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const cursorRef = useRef(0);
+
+  // StrictMode / yeniden-mount koruması için epoch
+  const loopIdRef = useRef(0);
 
   useEffect(() => {
     if (!runKey) return;
@@ -30,17 +37,20 @@ export function useProgress(runKey: string | null, waitSec = 25) {
       endTime: null,
       steps: [],
     });
+    setError(null);
 
     // önceki poll’u iptal et
     abortRef.current?.abort();
     abortRef.current = new AbortController();
     cursorRef.current = 0;
+    const myLoopId = ++loopIdRef.current;
 
     let cancelled = false;
     let emptyHits = 0; // arka arkaya boş dönüş sayacı (backoff için)
 
     const loop = async () => {
-      while (!cancelled) {
+      while (!cancelled && loopIdRef.current === myLoopId) {
+        const t0 = Date.now();
         try {
           const res = await longPollEvents(
             runKey,
@@ -49,7 +59,7 @@ export function useProgress(runKey: string | null, waitSec = 25) {
             abortRef.current!.signal,
           );
 
-          const raw = Array.isArray(res?.events) ? res!.events : [];
+          const raw = Array.isArray(res?.events) ? res.events : [];
           const newSteps: RunStep[] = raw.map((e) => ({
             time: e.time,
             name: e.name,
@@ -63,7 +73,8 @@ export function useProgress(runKey: string | null, waitSec = 25) {
           }));
 
           const nextCursor =
-            typeof res?.nextCursor === 'number' ? res!.nextCursor : cursorRef.current;
+            typeof res?.nextCursor === 'number' ? res.nextCursor : cursorRef.current;
+
           const hasNew = newSteps.length > 0 || nextCursor !== cursorRef.current;
 
           setData((prev) => {
@@ -73,9 +84,13 @@ export function useProgress(runKey: string | null, waitSec = 25) {
             const terminal = terminalByApi || looksTerminal(steps);
 
             return {
-              status: terminal ? (res?.status ?? 'completed') : (res?.status ?? prev?.status ?? 'running'),
+              status: terminal
+                ? (res?.status ?? 'completed')
+                : (res?.status ?? prev?.status ?? 'running'),
               startTime: prev?.startTime,
-              endTime: terminal ? (res?.endTime ?? new Date().toISOString()) : (prev?.endTime ?? null),
+              endTime: terminal
+                ? (res?.endTime ?? new Date().toISOString())
+                : (prev?.endTime ?? null),
               steps,
               result: prev?.result,
               params: (prev as any)?.params,
@@ -87,17 +102,20 @@ export function useProgress(runKey: string | null, waitSec = 25) {
           // çıkış koşulu
           if (res?.status === 'completed' || res?.status === 'error' || !!res?.endTime) break;
 
-          // backoff — boş dönüşlerde beklemeyi artır
-          if (!hasNew && res?.status === 'running') {
-            emptyHits = Math.min(emptyHits + 1, 6); // max ~6 adım
-            await sleep(300 * emptyHits); // 300ms → … → 1800ms
-          } else {
-            emptyHits = 0; // yeni veri geldiyse sıfırla
-          }
+          // ---- İstemci-tarafı throttle + backoff ----
+          const elapsed = Date.now() - t0;
+          const baseGap = Math.max(minGapMs - elapsed, 0);
+
+          // boş dönüşlerde artan bekleme: 500ms → 5s (tavana sabitlenir)
+          const backoff = !hasNew ? Math.min(5000, 500 * (emptyHits + 1)) : 0;
+          emptyHits = !hasNew ? Math.min(emptyHits + 1, 10) : 0;
+
+          await sleep(baseGap + backoff);
         } catch (e: any) {
-          if (e?.name === 'AbortError') break; // run değişti veya ekran kapandı
+          if (e?.name === 'AbortError' || cancelled || loopIdRef.current !== myLoopId) break;
           setError(e?.message || String(e));
-          break;
+          // hatada biraz bekleyip tekrar dene
+          await sleep(3000);
         }
       }
     };
@@ -109,7 +127,7 @@ export function useProgress(runKey: string | null, waitSec = 25) {
       abortRef.current?.abort();
       abortRef.current = null;
     };
-  }, [runKey, waitSec]);
+  }, [runKey, waitSec, minGapMs]);
 
   return { data, error };
 }
